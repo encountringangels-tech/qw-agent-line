@@ -1,0 +1,15 @@
+server:
+  port: 8089
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: qw-agent-line
+
+logging:
+  level:
+    root: INFO
+    com.qw.agent.line: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{36} - %msg%n"

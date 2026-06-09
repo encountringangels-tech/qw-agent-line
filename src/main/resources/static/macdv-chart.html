@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MACD-V 实时图表</title>
+    <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #131722;
+            color: #d1d4dc;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 12px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .controls {
+            display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+            margin-bottom: 12px; padding: 12px 16px;
+            background: #1e222d; border-radius: 8px;
+        }
+        .controls label { font-size: 13px; color: #787b86; }
+        .controls select, .controls input {
+            background: #2a2e39; border: 1px solid #3a3e4a; color: #d1d4dc;
+            padding: 6px 10px; border-radius: 4px; font-size: 13px;
+        }
+        .controls button {
+            background: #2962FF; color: #fff; border: none;
+            padding: 7px 18px; border-radius: 4px; cursor: pointer;
+            font-size: 13px; font-weight: 600; transition: background .2s;
+        }
+        .controls button:hover { background: #1e4bd2; }
+        .controls .status { margin-left: auto; font-size: 12px; color: #787b86; }
+        .controls .status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+        .dot.connected { background: #089981; }
+        .dot.loading { background: #f0d43a; animation: pulse 1s infinite; }
+        .dot.error { background: #f23645; }
+        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        .chart-wrapper { background: #1e222d; border-radius: 8px; padding: 12px; margin-bottom: 6px; }
+        #candlestick-chart { width: 100%; height: 520px; }
+        #macdv-chart { width: 100%; height: 240px; }
+        .signal-panel {
+            background: #1e222d; border-radius: 8px; padding: 12px 16px;
+            margin-bottom: 6px; display: flex; gap: 24px; flex-wrap: wrap;
+        }
+        .signal-item { display: flex; flex-direction: column; gap: 2px; }
+        .signal-item .label { font-size: 11px; color: #787b86; text-transform: uppercase; }
+        .signal-item .value { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+        .value.bull { color: #089981; }
+        .value.bear { color: #f23645; }
+        .value.neutral { color: #d1d4dc; }
+        .value.overbought { color: #f23645; }
+        .value.oversold { color: #089981; }
+        .params { display: flex; gap: 16px; flex-wrap: wrap; align-items: center; }
+        .param-group { display: flex; align-items: center; gap: 4px; }
+        .param-group label { font-size: 12px; }
+        .param-group input { width: 48px; text-align: center; }
+        @media (max-width: 768px) {
+            #candlestick-chart { height: 380px; }
+            #macdv-chart { height: 180px; }
+            .controls { flex-direction: column; align-items: stretch; }
+            .controls .status { margin-left: 0; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="controls">
+        <div class="params">
+            <div class="param-group">
+                <label>交易对</label>
+                <select id="symbol-select">
+                    <option value="BTCUSDT">BTC/USDT</option>
+                    <option value="ETHUSDT">ETH/USDT</option>
+                    <option value="BNBUSDT">BNB/USDT</option>
+                    <option value="SOLUSDT">SOL/USDT</option>
+                    <option value="DOGEUSDT">DOGE/USDT</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label>周期</label>
+                <select id="interval-select">
+                    <option value="1m">1分钟</option>
+                    <option value="5m">5分钟</option>
+                    <option value="15m">15分钟</option>
+                    <option value="30m">30分钟</option>
+                    <option value="1h" selected>1小时</option>
+                    <option value="4h">4小时</option>
+                    <option value="1d">日线</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label>条数</label>
+                <select id="limit-select">
+                    <option value="200">200</option>
+                    <option value="500">500</option>
+                    <option value="1000" selected>1000</option>
+                </select>
+            </div>
+            <div class="param-group">
+                <label>快线</label>
+                <input type="number" id="fast-len" value="12" min="1">
+            </div>
+            <div class="param-group">
+                <label>慢线</label>
+                <input type="number" id="slow-len" value="26" min="1">
+            </div>
+            <div class="param-group">
+                <label>信号</label>
+                <input type="number" id="signal-len" value="9" min="1">
+            </div>
+            <div class="param-group">
+                <label>ATR</label>
+                <input type="number" id="atr-len" value="26" min="1">
+            </div>
+            <div class="param-group">
+                <label>超买</label>
+                <input type="number" id="overbought" value="150">
+            </div>
+            <div class="param-group">
+                <label>超卖</label>
+                <input type="number" id="oversold" value="-150">
+            </div>
+        </div>
+        <button id="refresh-btn">刷新</button>
+        <div class="status">
+            <span class="dot loading" id="status-dot"></span>
+            <span id="status-text">加载中...</span>
+        </div>
+    </div>
+
+    <div class="chart-wrapper"><div id="candlestick-chart"></div></div>
+    <div class="chart-wrapper"><div id="macdv-chart"></div></div>
+
+    <div class="signal-panel">
+        <div class="signal-item">
+            <span class="label">MACD-V 线</span>
+            <span class="value" id="val-macdv-line">--</span>
+        </div>
+        <div class="signal-item">
+            <span class="label">Signal 线</span>
+            <span class="value" id="val-macdv-signal">--</span>
+        </div>
+        <div class="signal-item">
+            <span class="label">柱状图</span>
+            <span class="value" id="val-macdv-hist">--</span>
+        </div>
+        <div class="signal-item">
+            <span class="label">信号</span>
+            <span class="value" id="val-signal-type">--</span>
+        </div>
+        <div class="signal-item">
+            <span class="label">强度</span>
+            <span class="value" id="val-strength">--</span>
+        </div>
+        <div class="signal-item">
+            <span class="label">原因</span>
+            <span class="value" id="val-reason" style="font-size:13px;font-weight:400;">--</span>
+        </div>
+    </div>
+</div>
+
+<script>
+// ========================================================================
+//  配置
+// ========================================================================
+const API_BASE = '/api/v1/macdv';
+
+// ========================================================================
+//  图表初始化
+// ========================================================================
+let candleSeries;
+let macdvLineSeries, macdvSignalSeries, macdvHistSeries, macdvObSeries, macdvOsSeries;
+let chartCandle, chartMACDV;
+let syncing = false; // 防止循环同步
+
+function initCharts() {
+    chartCandle = LightweightCharts.createChart(document.getElementById('candlestick-chart'), {
+        layout: { background: { type: 'solid', color: '#1e222d' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#3a3e4a' },
+        timeScale: { borderColor: '#3a3e4a', timeVisible: true, secondsVisible: false },
+        handleScroll: { vertTouchDrag: false },
+    });
+    candleSeries = chartCandle.addCandlestickSeries({
+        upColor: '#089981', downColor: '#f23645',
+        borderDownColor: '#f23645', borderUpColor: '#089981',
+        wickDownColor: '#f23645', wickUpColor: '#089981',
+    });
+
+    chartMACDV = LightweightCharts.createChart(document.getElementById('macdv-chart'), {
+        layout: { background: { type: 'solid', color: '#1e222d' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
+        crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+        rightPriceScale: { borderColor: '#3a3e4a', scaleMargins: { top: 0.08, bottom: 0.08 } },
+        timeScale: { borderColor: '#3a3e4a', timeVisible: true, secondsVisible: false },
+        handleScroll: { vertTouchDrag: false },
+    });
+
+    macdvHistSeries = chartMACDV.addHistogramSeries({
+        priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+        priceLineVisible: false, lastValueVisible: false,
+    });
+    macdvLineSeries = chartMACDV.addLineSeries({
+        color: '#2962FF', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    });
+    macdvSignalSeries = chartMACDV.addLineSeries({
+        color: '#FF6D00', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+    });
+    macdvObSeries = chartMACDV.addLineSeries({
+        color: '#f23645', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false,
+    });
+    macdvOsSeries = chartMACDV.addLineSeries({
+        color: '#089981', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+        priceLineVisible: false, lastValueVisible: false,
+    });
+
+    // 双向同步时间轴
+    chartCandle.timeScale().subscribeVisibleTimeRangeChange(() => {
+        if (syncing) return;
+        syncing = true;
+        const r = chartCandle.timeScale().getVisibleRange();
+        if (r) chartMACDV.timeScale().setVisibleRange(r);
+        syncing = false;
+    });
+    chartMACDV.timeScale().subscribeVisibleTimeRangeChange(() => {
+        if (syncing) return;
+        syncing = true;
+        const r = chartMACDV.timeScale().getVisibleRange();
+        if (r) chartCandle.timeScale().setVisibleRange(r);
+        syncing = false;
+    });
+}
+
+// ========================================================================
+//  数据获取
+// ========================================================================
+async function fetchData() {
+    const symbol = document.getElementById('symbol-select').value;
+    const interval = document.getElementById('interval-select').value;
+    const limit = document.getElementById('limit-select').value;
+    const fastLen = document.getElementById('fast-len').value;
+    const slowLen = document.getElementById('slow-len').value;
+    const signalLen = document.getElementById('signal-len').value;
+    const atrLen = document.getElementById('atr-len').value;
+    const overbought = document.getElementById('overbought').value;
+    const oversold = document.getElementById('oversold').value;
+
+    const url = `${API_BASE}/data?symbol=${symbol}&interval=${interval}&limit=${limit}`
+        + `&fastLen=${fastLen}&slowLen=${slowLen}&signalLen=${signalLen}&atrLen=${atrLen}`
+        + `&overbought=${overbought}&oversold=${oversold}`;
+
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`后端错误 ${resp.status}`);
+    return resp.json();
+}
+
+// ========================================================================
+//  渲染
+// ========================================================================
+function renderCharts(data) {
+    const klines = data.klines || [];
+    const macdvArr = data.macdv || [];
+    const signals = data.signals || [];
+    const latestSig = data.latestSignal || {};
+
+    // ---- K 线 ----
+    candleSeries.setData(klines.map(k => ({
+        time: k.time, open: k.open, high: k.high, low: k.low, close: k.close,
+    })));
+
+    // ---- MACD-V 指标 ----
+    const lineData = [];
+    const signalData = [];
+    const histData = [];
+    let prevHist = null;
+
+    for (const r of macdvArr) {
+        if (r.macdV === null) continue;
+        lineData.push({ time: r.time, value: r.macdV });
+        signalData.push({ time: r.time, value: r.signal });
+        let color;
+        if (r.hist >= 0) {
+            color = (prevHist !== null && r.hist > prevHist) ? '#26A69A' : '#B2DFDB';
+        } else {
+            color = (prevHist !== null && r.hist > prevHist) ? '#FFCDD2' : '#FF5252';
+        }
+        histData.push({ time: r.time, value: r.hist, color });
+        prevHist = r.hist;
+    }
+
+    macdvLineSeries.setData(lineData);
+    macdvSignalSeries.setData(signalData);
+    macdvHistSeries.setData(histData);
+
+    // ---- 超买超卖参考线 ----
+    const times = lineData.map(d => d.time);
+    if (times.length > 0) {
+        const obVal = parseFloat(document.getElementById('overbought').value);
+        const osVal = parseFloat(document.getElementById('oversold').value);
+        macdvObSeries.setData(times.map(t => ({ time: t, value: obVal })));
+        macdvOsSeries.setData(times.map(t => ({ time: t, value: osVal })));
+    }
+
+    // ---- 买卖标记 ----
+    candleSeries.setMarkers(signals.map(s => {
+        const isBuy = s.type === 'BUY';
+        let shape = 'arrowUp', text = '';
+        if (s.subType === 'golden_cross')  { shape = 'arrowUp';   text = 'B';  }
+        if (s.subType === 'death_cross')   { shape = 'arrowDown'; text = 'S';  }
+        if (s.subType === 'oversold')      { shape = 'circle';    text = 'OS'; }
+        if (s.subType === 'overbought')    { shape = 'circle';    text = 'OB'; }
+        return {
+            time: s.time,
+            position: isBuy ? 'belowBar' : 'aboveBar',
+            color: isBuy ? '#089981' : '#f23645',
+            shape, text,
+            size: (s.subType === 'oversold' || s.subType === 'overbought') ? 1.0 : 1.5,
+        };
+    }));
+
+    // ---- 信号面板 ----
+    const elLine = document.getElementById('val-macdv-line');
+    const elSig = document.getElementById('val-macdv-signal');
+    const elHist = document.getElementById('val-macdv-hist');
+    const elType = document.getElementById('val-signal-type');
+    const elStrength = document.getElementById('val-strength');
+    const elReason = document.getElementById('val-reason');
+    const ob = parseFloat(document.getElementById('overbought').value);
+    const os = parseFloat(document.getElementById('oversold').value);
+
+    if (latestSig.macdvLine !== undefined) {
+        const mv = latestSig.macdvLine;
+        const ms = latestSig.macdvSignal;
+        const mh = latestSig.macdvHist;
+        elLine.textContent = mv.toFixed(2);
+        elSig.textContent = ms.toFixed(2);
+        elHist.textContent = mh.toFixed(2);
+        elLine.className = 'value' + (mv > ob ? ' overbought' : mv < os ? ' oversold' : '');
+        elHist.className = 'value' + (mh >= 0 ? ' bull' : ' bear');
+
+        if (latestSig.type === 'BUY' && latestSig.strength >= 0.25) {
+            elType.textContent = '🟢 买入';
+            elType.className = 'value bull';
+            elStrength.textContent = (latestSig.strength * 100).toFixed(0) + '%';
+            elReason.textContent = latestSig.reason || '-';
+        } else if (latestSig.type === 'SELL' && latestSig.strength >= 0.25) {
+            elType.textContent = '🔴 卖出';
+            elType.className = 'value bear';
+            elStrength.textContent = (latestSig.strength * 100).toFixed(0) + '%';
+            elReason.textContent = latestSig.reason || '-';
+        } else {
+            elType.textContent = '⚪ 观望';
+            elType.className = 'value neutral';
+            elStrength.textContent = '-';
+            elReason.textContent = '-';
+        }
+    }
+
+    // ---- 时间轴对齐（关键：setData 后两个图表必须完全对齐） ----
+    requestAnimationFrame(() => {
+        chartCandle.timeScale().fitContent();
+        chartMACDV.timeScale().fitContent();
+        // 以蜡烛图为准同步到指标图
+        const r = chartCandle.timeScale().getVisibleRange();
+        if (r) {
+            syncing = true;
+            chartMACDV.timeScale().setVisibleRange(r);
+            syncing = false;
+        }
+    });
+}
+
+// ========================================================================
+//  状态与控制
+// ========================================================================
+function setStatus(state, text) {
+    document.getElementById('status-dot').className = 'dot ' + state;
+    document.getElementById('status-text').textContent = text;
+}
+
+let refreshTimer = null;
+
+async function refresh() {
+    setStatus('loading', '请求中...');
+    try {
+        const data = await fetchData();
+        renderCharts(data);
+        const n = data.klines.length;
+        const valid = data.macdv ? data.macdv.filter(r => r.macdV !== null).length : 0;
+        setStatus('connected', `${n} 根 ${document.getElementById('interval-select').value} K 线  |  MACD-V ${valid} 点有效`);
+    } catch (err) {
+        setStatus('error', err.message);
+    }
+}
+
+function startAutoRefresh() {
+    refresh();
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(refresh, 60000);
+}
+
+document.getElementById('refresh-btn').addEventListener('click', refresh);
+document.querySelectorAll('.params select, .params input').forEach(el => {
+    el.addEventListener('change', refresh);
+});
+
+initCharts();
+startAutoRefresh();
+</script>
+</body>
+</html>

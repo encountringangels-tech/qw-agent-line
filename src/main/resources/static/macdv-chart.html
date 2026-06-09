@@ -36,9 +36,14 @@
         .dot.loading { background: #f0d43a; animation: pulse 1s infinite; }
         .dot.error { background: #f23645; }
         @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
-        .chart-wrapper { background: #1e222d; border-radius: 8px; padding: 12px; margin-bottom: 6px; }
-        #candlestick-chart { width: 100%; height: 520px; }
-        #macdv-chart { width: 100%; height: 240px; }
+        .chart-stack {
+            display: flex; flex-direction: column; gap: 4px;
+            background: #1e222d; border-radius: 8px; padding: 12px; margin-bottom: 6px;
+        }
+        .chart-stack .pane-candle { flex: 7; min-height: 300px; }
+        .chart-stack .pane-macdv { flex: 1; min-height: 100px; }
+        #candlestick-chart { width: 100%; height: 100%; }
+        #macdv-chart { width: 100%; height: 100%; }
         .signal-panel {
             background: #1e222d; border-radius: 8px; padding: 12px 16px;
             margin-bottom: 6px; display: flex; gap: 24px; flex-wrap: wrap;
@@ -56,8 +61,9 @@
         .param-group label { font-size: 12px; }
         .param-group input { width: 48px; text-align: center; }
         @media (max-width: 768px) {
-            #candlestick-chart { height: 380px; }
-            #macdv-chart { height: 180px; }
+            .chart-stack { flex-direction: column; }
+            .chart-stack .pane-candle { flex: 4; min-height: 200px; }
+            .chart-stack .pane-macdv { flex: 1; min-height: 80px; }
             .controls { flex-direction: column; align-items: stretch; }
             .controls .status { margin-left: 0; }
         }
@@ -129,8 +135,10 @@
         </div>
     </div>
 
-    <div class="chart-wrapper"><div id="candlestick-chart"></div></div>
-    <div class="chart-wrapper"><div id="macdv-chart"></div></div>
+    <div class="chart-stack">
+        <div class="pane-candle"><div id="candlestick-chart"></div></div>
+        <div class="pane-macdv"><div id="macdv-chart"></div></div>
+    </div>
 
     <div class="signal-panel">
         <div class="signal-item">
@@ -191,7 +199,11 @@ function initCharts() {
         grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
         rightPriceScale: { borderColor: '#3a3e4a' },
-        timeScale: { borderColor: '#3a3e4a', timeVisible: true, secondsVisible: false },
+        timeScale: {
+            borderColor: '#2a2e39',
+            timeVisible: true, secondsVisible: false,
+            borderVisible: false,
+        },
         handleScroll: { vertTouchDrag: false },
     });
     candleSeries = chartCandle.addCandlestickSeries({
@@ -204,8 +216,12 @@ function initCharts() {
         layout: { background: { type: 'solid', color: '#1e222d' }, textColor: '#d1d4dc' },
         grid: { vertLines: { color: '#2a2e39' }, horzLines: { color: '#2a2e39' } },
         crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-        rightPriceScale: { borderColor: '#3a3e4a', scaleMargins: { top: 0.08, bottom: 0.08 } },
-        timeScale: { borderColor: '#3a3e4a', timeVisible: true, secondsVisible: false },
+        rightPriceScale: { borderColor: '#3a3e4a', scaleMargins: { top: 0.15, bottom: 0.15 } },
+        timeScale: {
+            borderColor: '#3a3e4a',
+            timeVisible: true, secondsVisible: false,
+            borderVisible: true,
+        },
         handleScroll: { vertTouchDrag: false },
     });
 
@@ -228,21 +244,10 @@ function initCharts() {
         priceLineVisible: false, lastValueVisible: false,
     });
 
-    // 时间轴双向同步（用户缩放/拖拽时联动）
-    let syncing = false;
+    // 时间轴单向同步：仅 K 线图 → MACD 图，避免循环冲突
     chartCandle.timeScale().subscribeVisibleTimeRangeChange(() => {
-        if (syncing) return;
-        syncing = true;
         const r = chartCandle.timeScale().getVisibleRange();
         if (r) chartMACDV.timeScale().setVisibleRange(r);
-        syncing = false;
-    });
-    chartMACDV.timeScale().subscribeVisibleTimeRangeChange(() => {
-        if (syncing) return;
-        syncing = true;
-        const r = chartMACDV.timeScale().getVisibleRange();
-        if (r) chartCandle.timeScale().setVisibleRange(r);
-        syncing = false;
     });
 }
 

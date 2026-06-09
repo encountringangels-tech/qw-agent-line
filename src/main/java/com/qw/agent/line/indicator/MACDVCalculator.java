@@ -110,7 +110,7 @@ public class MACDVCalculator {
     }
 
     /**
-     * 从列表中收集有效值（跳过 null）。
+     * 从列表中收集有效值（跳过 null）。1
      */
     private List<BigDecimal> collectValidValues(List<BigDecimal> values, int endIdx, int maxCount) {
         List<BigDecimal> result = new ArrayList<>();

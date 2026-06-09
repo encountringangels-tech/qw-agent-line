@@ -5,17 +5,15 @@ import com.qw.agent.line.model.MACDVPoint;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 
 /**
- * MACD-V 指标计算器 —— 纯算法，不依赖任何外部服务。
+ * MACD-V 指标计算器 —— 纯算法，增量迭代，O(N) 复杂度。
  * <p>
  * 计算公式（与 Pine Script "MACD-V" by jamiedubauskas 一致）：
  * <pre>
- *   MACD-V = ((EMA(close, fastLen) − EMA(close, slowLen)) / ATR(atrLen)) × 100
+ *   MACD-V = ((EMA(close, fastLen) − EMA(close, slowLen)) / ATR) × 100
  *   Signal = EMA(MACD-V, signalLen)
  *   Hist   = MACD-V − Signal
  * </pre>
@@ -23,167 +21,199 @@ import java.util.List;
 @Component
 public class MACDVCalculator {
 
-    /** 内部计算精度 */
-    private static final int SCALE = 8;
-
-    // ==================== 公开入口 ====================
-
     /**
-     * 对 K 线列表逐根计算 MACD-V 指标，返回与 K 线一一对应的指标点列表。
-     * 前面数据不足的 K 线对应的指标点为 null 值。
+     * 对 K 线列表逐根计算 MACD-V 指标。
+     * <p>
+     * 内部全部使用 double 数组 + 增量迭代，一次遍历完成。
      *
      * @param klines    K 线列表（按时间正序）
-     * @param fastLen   快线 EMA 周期（默认 12）
-     * @param slowLen   慢线 EMA 周期（默认 26）
-     * @param signalLen 信号线 EMA 周期（默认 9）
-     * @param atrLen    ATR 周期（默认 26，建议与 slowLen 保持一致）
-     * @return 每个 K 线对应的 MACD-V 点，长度与 klines 相同
+     * @param fastLen   快线 EMA 周期
+     * @param slowLen   慢线 EMA 周期
+     * @param signalLen 信号线 EMA 周期
+     * @param atrLen    ATR 周期
+     * @return 每根 K 线对应的 MACD-V 点
      */
     public List<MACDVPoint> calculate(List<Kline> klines,
                                        int fastLen,
                                        int slowLen,
                                        int signalLen,
                                        int atrLen) {
+        int n = klines.size();
         int needed = slowLen + atrLen + signalLen + 5;
-        List<MACDVPoint> results = new ArrayList<>(klines.size());
+        List<MACDVPoint> results = new ArrayList<>(n);
 
-        // 数据不足，全部返回无效点
-        if (klines.size() < needed) {
+        // 数据不足
+        if (n < needed) {
             for (Kline k : klines) {
                 results.add(new MACDVPoint(k.getOpenTime() / 1000, null, null, null));
             }
             return results;
         }
 
-        // 第一步：逐根计算 MACD-V 原始值
-        List<BigDecimal> rawValues = calculateRawMacdV(klines, fastLen, slowLen, atrLen);
+        // ---------------------------------------------------------------
+        //  第一步：提取收盘价，为后续计算做索引对齐
+        // ---------------------------------------------------------------
+        long[] times  = new long[n];
+        double[] high = new double[n];
+        double[] low  = new double[n];
+        double[] close = new double[n];
 
-        // 第二步：逐根计算 Signal 线（EMA of MACD-V）
-        for (int i = 0; i < rawValues.size(); i++) {
-            long time = klines.get(i).getOpenTime() / 1000;
-            BigDecimal mv = rawValues.get(i);
+        for (int i = 0; i < n; i++) {
+            Kline k = klines.get(i);
+            times[i] = k.getOpenTime() / 1000;
+            high[i]  = k.getHigh().doubleValue();
+            low[i]   = k.getLow().doubleValue();
+            close[i] = k.getClose().doubleValue();
+        }
 
-            if (mv == null) {
-                results.add(new MACDVPoint(time, null, null, null));
-                continue;
-            }
+        // ---------------------------------------------------------------
+        //  第二步：增量计算 EMA12 和 EMA26
+        //  EMA = (value − prevEMA) × k + prevEMA
+        // ---------------------------------------------------------------
+        double[] emaFast = incrementalEMA(close, fastLen);
+        double[] emaSlow = incrementalEMA(close, slowLen);
 
-            // 从当前位置往前收集足够多的有效 MACD-V 值
-            List<BigDecimal> validVals = collectValidValues(rawValues, i, signalLen + 3);
-            BigDecimal signal = calculateEMAFromList(validVals, signalLen);
+        // ---------------------------------------------------------------
+        //  第三步：增量计算 ATR
+        //  TR = max(high−low, |high−prevClose|, |low−prevClose|)
+        //  ATR = (prevATR × (period−1) + TR) / period   (Wilder 平滑)
+        // ---------------------------------------------------------------
+        double[] atr = incrementalATR(high, low, close, atrLen);
 
-            if (signal == null) {
-                results.add(new MACDVPoint(time, mv, null, null));
+        // ---------------------------------------------------------------
+        //  第四步：计算 MACD-V 原始值  (只算 emaFast && emaSlow && atr 都有效的点)
+        // ---------------------------------------------------------------
+        int macdvStart = Math.max(fastLen - 1, Math.max(slowLen - 1, atrLen - 1));
+        double[] macdVals = new double[n];
+        boolean[] valid = new boolean[n];
+
+        for (int i = macdvStart; i < n; i++) {
+            if (atr[i] == 0) continue; // 防止除零
+            macdVals[i] = (emaFast[i] - emaSlow[i]) / atr[i] * 100.0;
+            valid[i] = true;
+        }
+
+        // ---------------------------------------------------------------
+        //  第五步：增量计算 Signal 线 (EMA of MACD-V)
+        // ---------------------------------------------------------------
+        double[] signal = incrementalEMAOnValues(macdVals, valid, signalLen);
+
+        // ---------------------------------------------------------------
+        //  第六步：组装结果
+        // ---------------------------------------------------------------
+        for (int i = 0; i < n; i++) {
+            if (!valid[i] || Double.isNaN(signal[i])) {
+                results.add(new MACDVPoint(times[i], null, null, null));
             } else {
-                BigDecimal hist = mv.subtract(signal);
-                results.add(new MACDVPoint(time, mv, signal, hist));
+                double mv = macdVals[i];
+                double sg = signal[i];
+                double hist = mv - sg;
+                results.add(new MACDVPoint(times[i],
+                        BigDecimal.valueOf(round2(mv)),
+                        BigDecimal.valueOf(round2(sg)),
+                        BigDecimal.valueOf(round2(hist))));
             }
         }
 
         return results;
     }
 
-    // ==================== 私有计算方法 ====================
+    // ==================== 增量算法 ====================
 
     /**
-     * 逐根计算原始 MACD-V 值。
-     * MACD-V = ((EMA(fast) - EMA(slow)) / ATR) × 100
+     * 增量 EMA: 一次遍历计算所有 K 线的 EMA。
+     * 前 period−1 个位置标记为 NaN（无效）。
      */
-    private List<BigDecimal> calculateRawMacdV(List<Kline> klines, int fastLen, int slowLen, int atrLen) {
-        List<BigDecimal> raw = new ArrayList<>(klines.size());
-        for (int i = 0; i < klines.size(); i++) {
-            List<Kline> window = klines.subList(0, i + 1);
-            BigDecimal emaFast = calculateEMA(window, fastLen);
-            BigDecimal emaSlow = calculateEMA(window, slowLen);
-            BigDecimal atr = calculateATR(window, atrLen);
+    private double[] incrementalEMA(double[] values, int period) {
+        int n = values.length;
+        double[] result = new double[n];
+        double k = 2.0 / (period + 1);
 
-            if (emaFast == null || emaSlow == null || atr == null || atr.signum() == 0) {
-                raw.add(null);
-            } else {
-                BigDecimal macdV = emaFast.subtract(emaSlow)
-                        .divide(atr, SCALE, RoundingMode.HALF_UP)
-                        .multiply(BigDecimal.valueOf(100));
-                raw.add(macdV);
-            }
+        // 初始 SMA
+        double sum = 0;
+        for (int i = 0; i < period; i++) sum += values[i];
+        result[period - 1] = sum / period;
+
+        // 增量迭代
+        for (int i = period; i < n; i++) {
+            result[i] = (values[i] - result[i - 1]) * k + result[i - 1];
         }
-        return raw;
+        return result;
     }
 
     /**
-     * 从列表中收集有效值（跳过 null）。1
+     * 增量 EMA: 在已有 MACD-V 值上计算 Signal 线。
+     * 只对 valid=true 的位置做 EMA，跳过无效点。
      */
-    private List<BigDecimal> collectValidValues(List<BigDecimal> values, int endIdx, int maxCount) {
-        List<BigDecimal> result = new ArrayList<>();
-        for (int j = endIdx; j >= 0 && result.size() < maxCount; j--) {
-            if (values.get(j) != null) {
-                result.add(0, values.get(j));
+    private double[] incrementalEMAOnValues(double[] values, boolean[] valid, int period) {
+        int n = values.length;
+        double[] result = new double[n];
+
+        // 找到第一个有效位置的索引
+        int start = -1;
+        for (int i = 0; i < n; i++) {
+            if (valid[i]) { start = i; break; }
+        }
+        if (start < 0) return result; // 全部 NaN
+
+        double k = 2.0 / (period + 1);
+
+        // 收集前 period 个有效值算 SMA 作为初始 EMA
+        double sum = 0;
+        int count = 0;
+        int idx = start;
+        while (count < period && idx < n) {
+            if (valid[idx]) { sum += values[idx]; count++; }
+            idx++;
+        }
+        if (count < period) return result; // 有效值不够
+
+        // 初始 EMA 设在前 period 个有效值的最后一个位置
+        int emaPos = idx - 1;
+        result[emaPos] = sum / period;
+
+        // 从 emaPos 往后继续增量
+        for (int i = emaPos + 1; i < n; i++) {
+            if (valid[i]) {
+                result[i] = (values[i] - result[i - 1]) * k + result[i - 1];
             }
         }
         return result;
     }
 
-    // ==================== 基础技术指标 ====================
-
     /**
-     * 计算简单移动平均线（SMA）。
+     * 增量 ATR: Wilder 平滑法，一次遍历。
+     * TR = max(high−low, |high−prevClose|, |low−prevClose|)
+     * ATR = (prevATR × (period−1) + TR) / period
      */
-    BigDecimal calculateSMA(List<Kline> data, int period) {
-        if (data.size() < period) return null;
-        BigDecimal sum = BigDecimal.ZERO;
-        for (int i = data.size() - period; i < data.size(); i++) {
-            sum = sum.add(data.get(i).getClose());
+    private double[] incrementalATR(double[] high, double[] low, double[] close, int period) {
+        int n = high.length;
+        double[] atr = new double[n];
+
+        // 先算所有 TR
+        double[] tr = new double[n];
+        tr[0] = high[0] - low[0]; // 第一根没有前收盘
+        for (int i = 1; i < n; i++) {
+            double hl = high[i] - low[i];
+            double hc = Math.abs(high[i] - close[i - 1]);
+            double lc = Math.abs(low[i]  - close[i - 1]);
+            tr[i] = Math.max(hl, Math.max(hc, lc));
         }
-        return sum.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP);
+
+        // 初始 SMA(TR) 作为第一个 ATR
+        double sum = 0;
+        for (int i = 0; i < period; i++) sum += tr[i];
+        atr[period - 1] = sum / period;
+
+        // 增量 Wilder 平滑
+        for (int i = period; i < n; i++) {
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period;
+        }
+        return atr;
     }
 
-    /**
-     * 计算指数移动平均线（EMA）。
-     * EMA = (close − EMAprev) × k + EMAprev,  k = 2 / (period + 1)
-     */
-    public BigDecimal calculateEMA(List<Kline> data, int period) {
-        if (data.size() < period) return null;
-        BigDecimal k = BigDecimal.valueOf(2)
-                .divide(BigDecimal.valueOf(period + 1), SCALE, RoundingMode.HALF_UP);
-        BigDecimal ema = calculateSMA(data.subList(0, period), period);
-        if (ema == null) return null;
-        for (int i = period; i < data.size(); i++) {
-            ema = data.get(i).getClose().subtract(ema).multiply(k).add(ema);
-        }
-        return ema;
-    }
-
-    /**
-     * 从一组标量值计算 EMA（用于 MACD-V 的 Signal 线）。
-     */
-    public BigDecimal calculateEMAFromList(List<BigDecimal> values, int period) {
-        if (values.size() < period) return null;
-        BigDecimal k = BigDecimal.valueOf(2)
-                .divide(BigDecimal.valueOf(period + 1), SCALE, RoundingMode.HALF_UP);
-        BigDecimal ema = values.subList(0, period).stream()
-                .reduce(BigDecimal.ZERO, BigDecimal::add)
-                .divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP);
-        for (int i = period; i < values.size(); i++) {
-            ema = values.get(i).subtract(ema).multiply(k).add(ema);
-        }
-        return ema;
-    }
-
-    /**
-     * 计算平均真实波幅（ATR）。
-     * TR = max(high − low, |high − prevClose|, |low − prevClose|)
-     * ATR = sum(TR) / period
-     */
-    public BigDecimal calculateATR(List<Kline> data, int period) {
-        if (data.size() < period + 1) return null;
-        BigDecimal sum = BigDecimal.ZERO;
-        for (int i = data.size() - period; i < data.size(); i++) {
-            Kline c = data.get(i);
-            Kline p = data.get(i - 1);
-            BigDecimal hl = c.getHigh().subtract(c.getLow()).abs();
-            BigDecimal hc = c.getHigh().subtract(p.getClose()).abs();
-            BigDecimal lc = c.getLow().subtract(p.getClose()).abs();
-            sum = sum.add(Collections.max(List.of(hl, hc, lc)));
-        }
-        return sum.divide(BigDecimal.valueOf(period), SCALE, RoundingMode.HALF_UP);
+    /** 保留两位小数 */
+    private static double round2(double v) {
+        return Math.round(v * 100.0) / 100.0;
     }
 }

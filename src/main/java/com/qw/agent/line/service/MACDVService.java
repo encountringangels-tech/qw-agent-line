@@ -15,7 +15,6 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * MACD-V 业务服务 —— 编排整个流程：
@@ -34,6 +33,9 @@ public class MACDVService {
     /** 币安现货 K 线 API 地址 */
     private static final String BINANCE_KLINE_URL = "https://api.binance.com/api/v3/klines";
 
+    /** 复用 ObjectMapper（避免每次请求创建新实例） */
+    private static final ObjectMapper MAPPER = new ObjectMapper();
+
     private final HttpClient httpClient;
     private final MACDVCalculator calculator;
     private final MACDVSignalGenerator signalGenerator;
@@ -51,17 +53,6 @@ public class MACDVService {
 
     /**
      * 获取 MACD-V 图表的全部数据（K 线 + 指标 + 信号）。
-     *
-     * @param symbol     交易对，如 BTCUSDT
-     * @param interval   K 线周期，如 1m / 5m / 15m / 1h / 4h / 1d
-     * @param limit      获取多少根 K 线
-     * @param fastLen    快线 EMA 周期
-     * @param slowLen    慢线 EMA 周期
-     * @param signalLen  信号线 EMA 周期
-     * @param atrLen     ATR 周期
-     * @param overbought 超买阈值
-     * @param oversold   超卖阈值
-     * @return 前端所需的完整数据 Map
      */
     public Map<String, Object> getChartData(String symbol, String interval, int limit,
                                              int fastLen, int slowLen, int signalLen, int atrLen,
@@ -73,22 +64,32 @@ public class MACDVService {
             return buildEmptyResult(symbol, interval);
         }
 
-        // 2. K 线转前端格式
-        List<Map<String, Object>> klineData = klines.stream().map(this::toKlineMap).collect(Collectors.toList());
+        // 2. K 线转前端格式（for 循环替代 stream，减少对象分配）
+        int n = klines.size();
+        List<Map<String, Object>> klineData = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            klineData.add(toKlineMap(klines.get(i)));
+        }
 
         // 3. 计算 MACD-V 指标
         List<MACDVPoint> macdvPoints = calculator.calculate(klines, fastLen, slowLen, signalLen, atrLen);
 
         // 4. 指标点转前端格式
-        List<Map<String, Object>> macdvData = macdvPoints.stream().map(this::toMACDVMap).collect(Collectors.toList());
+        List<Map<String, Object>> macdvData = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            macdvData.add(toMACDVMap(macdvPoints.get(i)));
+        }
 
         // 5. 生成批量买卖信号
         List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, overbought, oversold);
-        List<Map<String, Object>> signalData = tradeSignals.stream().map(this::toSignalMap).collect(Collectors.toList());
+        int m = tradeSignals.size();
+        List<Map<String, Object>> signalData = new ArrayList<>(m);
+        for (int i = 0; i < m; i++) {
+            signalData.add(toSignalMap(tradeSignals.get(i)));
+        }
 
         // 6. 生成最新综合信号
         LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, overbought, oversold);
-        Map<String, Object> latestData = toLatestSignalMap(latest);
 
         // 7. 组装结果
         Map<String, Object> result = new LinkedHashMap<>();
@@ -97,7 +98,7 @@ public class MACDVService {
         result.put("klines", klineData);
         result.put("macdv", macdvData);
         result.put("signals", signalData);
-        result.put("latestSignal", latestData);
+        result.put("latestSignal", toLatestSignalMap(latest));
 
         return result;
     }
@@ -123,8 +124,7 @@ public class MACDVService {
                 throw new RuntimeException("币安 API 错误 " + resp.statusCode() + ": " + resp.body());
             }
 
-            ObjectMapper mapper = new ObjectMapper();
-            List<Object> raw = mapper.readValue(resp.body(), List.class);
+            List<Object> raw = MAPPER.readValue(resp.body(), List.class);
 
             List<Kline> result = new ArrayList<>(raw.size());
             for (Object obj : raw) {

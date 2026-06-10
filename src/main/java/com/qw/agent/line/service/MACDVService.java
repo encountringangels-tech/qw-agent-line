@@ -110,6 +110,51 @@ public class MACDVService {
         return result;
     }
 
+    // ==================== 定时任务同步 MACDV ====================
+
+    /** 默认 MACD-V 参数 */
+    private static final int DEFAULT_FAST_LEN   = 12;
+    private static final int DEFAULT_SLOW_LEN   = 26;
+    private static final int DEFAULT_SIGNAL_LEN = 9;
+    private static final int DEFAULT_ATR_LEN    = 26;
+
+    /**
+     * 定时任务调用 —— 检查近 7 天 K 线是否都已计算 MACD-V，缺失则自动补齐。
+     * <p>
+     * 全量重算后通过 {@code INSERT OR IGNORE} 写入，已有时间点自动跳过，
+     * 只有新增 K 线对应的 MACD-V 点会被持久化。
+     */
+    public void syncMACDV(String symbol, String interval) {
+        int totalKlines = klineStore.countKlines(symbol, interval);
+        if (totalKlines == 0) {
+            return;
+        }
+
+        int needed = DEFAULT_SLOW_LEN + DEFAULT_ATR_LEN + DEFAULT_SIGNAL_LEN + 5;
+        if (totalKlines < needed) {
+            log.debug("K 线数量不足 [{}/{}]: {}/{}", symbol, interval, totalKlines, needed);
+            return;
+        }
+
+        // 检查近 7 天是否有 K 线缺少对应 MACD-V
+        long sevenDaysAgo = System.currentTimeMillis() - 7L * 24 * 3600 * 1000;
+        int missing = klineStore.countKlinesWithoutMACDV(symbol, interval, sevenDaysAgo);
+        if (missing == 0) {
+            log.debug("MACD-V 已是最新 [{}/{}]", symbol, interval);
+            return;
+        }
+
+        log.info("检测到 [{}/{}] 近 7 天有 {} 根 K 线缺少 MACD-V，开始重算", symbol, interval, missing);
+
+        List<Kline> klines = klineStore.getKlines(symbol, interval, totalKlines);
+        List<MACDVPoint> points = calculator.calculate(
+                klines, DEFAULT_FAST_LEN, DEFAULT_SLOW_LEN, DEFAULT_SIGNAL_LEN, DEFAULT_ATR_LEN);
+        klineStore.saveMACDVPoints(symbol, interval, points);
+
+        int macdvTotal = klineStore.countMACDVPoints(symbol, interval);
+        log.info("MACD-V 已同步 [{}/{}]: 总计 {} 点", symbol, interval, macdvTotal);
+    }
+
     // ==================== 本地缓存读取（KlineStore） ====================
 
     private List<Kline> getCachedKlines(String symbol, String interval, int limit) {

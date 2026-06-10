@@ -177,6 +177,29 @@ public class KlineStore {
                 jdbc.queryForObject(sql, Integer.class, symbol, interval), 0);
     }
 
+    /**
+     * 统计指定时间范围内缺少 MACD-V 指标的 K 线条数。
+     * <p>
+     * K 线 {@code open_time} 为毫秒，MACD-V {@code time} 为秒，通过 {@code /1000} 对齐。
+     *
+     * @param sinceTimeMs 起始时间（毫秒），只检查此时间之后的 K 线
+     * @return 缺失 MACD-V 的 K 线条数
+     */
+    public int countKlinesWithoutMACDV(String symbol, String interval, long sinceTimeMs) {
+        String sql = """
+            SELECT COUNT(*) FROM kline
+            WHERE symbol = ? AND interval = ? AND open_time >= ?
+            AND NOT EXISTS (
+                SELECT 1 FROM macdv_point
+                WHERE macdv_point.symbol = kline.symbol
+                  AND macdv_point.interval = kline.interval
+                  AND macdv_point.time = kline.open_time / 1000
+            )
+        """;
+        return Objects.requireNonNullElse(
+                jdbc.queryForObject(sql, Integer.class, symbol, interval, sinceTimeMs), 0);
+    }
+
     // ==================== 行映射 ====================
 
     private Kline mapKline(ResultSet rs, int rowNum) throws SQLException {

@@ -74,11 +74,9 @@ public class MACDVSignalGenerator {
             boolean histVBottom = h2 > h1 && h1 < h;  // Hist V底
             boolean histVTop    = h2 < h1 && h1 > h;  // Hist 倒V顶
 
-            // 趋势过滤：不在极端方向开逆势单
-            // isD: 开多条件 — 不启用过滤时需 MACDV < dTh；启用时需 MACDV > -50（不是极度看空）
-            // isK: 开空条件 — 不启用过滤时需 MACDV > kTh；启用时需 MACDV < 50（不是极度看多）
-            boolean isD = !trendFilter ? (cm < dTh) : (cm > -50);
-            boolean isK = !trendFilter ? (cm > kTh) : (cm < 50);
+            // 趋势过滤：MACDV > 0 只允许做多，MACDV < 0 只允许做空
+            boolean isD = !trendFilter ? (cm < dTh) : (cm > 0);
+            boolean isK = !trendFilter ? (cm > kTh) : (cm < 0);
 
             // === 状态机 ===
             if ("NONE".equals(state)) {
@@ -169,8 +167,8 @@ public class MACDVSignalGenerator {
             boolean histVTop    = h2 < h1 && h1 > h;
 
             // 趋势过滤（与 generateBatch 一致）
-            boolean isD = !trendFilter ? (cm < dTh) : (cm > -50);
-            boolean isK = !trendFilter ? (cm > kTh) : (cm < 50);
+            boolean isD = !trendFilter ? (cm < dTh) : (cm > 0);
+            boolean isK = !trendFilter ? (cm > kTh) : (cm < 0);
 
             if ("NONE".equals(state)) {
                 if (isD && histVBottom) {

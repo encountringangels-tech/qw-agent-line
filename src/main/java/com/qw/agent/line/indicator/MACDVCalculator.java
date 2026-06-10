@@ -6,6 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -148,6 +149,7 @@ public class MACDVCalculator {
     private double[] incrementalEMAOnValues(double[] values, boolean[] valid, int period) {
         int n = values.length;
         double[] result = new double[n];
+        Arrays.fill(result, Double.NaN);  // 未初始化位置标记为 NaN，避免被误认为有效值
 
         // 找到第一个有效位置的索引
         int start = -1;

@@ -13,7 +13,6 @@ import java.io.File;
  * 数据源配置 —— 自动解析数据库文件路径。
  * <p>
  * 无论从父目录 {@code C:\git-lotto} 还是直接进入 {@code qw-agent-line} 启动，
- * 数据库文件始终创建在 {@code [项目目录]/data/agent-line.db} 下。
  */
 @Configuration
 public class DataSourceConfig {

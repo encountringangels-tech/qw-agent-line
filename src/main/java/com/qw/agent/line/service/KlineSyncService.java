@@ -24,7 +24,7 @@ public class KlineSyncService {
     private static final String[] SYMBOLS = {"BTCUSDT", "ETHUSDT", "BNBUSDT", "SOLUSDT", "DOGEUSDT"};
 
     /** 需要同步的 K 线周期 */
-    private static final String[] INTERVALS = {"5m", "10m", "15m", "30m", "1h", "4h", "1d"};
+    private static final String[] INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"};
 
     /** 首次同步时拉取的历史 K 线条数 */
     private static final int INITIAL_LIMIT = 1000;

@@ -4,10 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
-<meta http-equiv="Pragma" content="no-cache">
-<meta http-equiv="Expires" content="0">
-<title>MACD-V 实时图表 v1.0.4</title>
-<script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js?v=1.0.4"></script>
+<title>MACD-V 实时图表</title>
+<script src="lc.js"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;padding:6px 8px;height:100vh}
@@ -101,19 +99,10 @@ body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFo
 </div>
 
 <script>
-// ============================================================
-//  常量 & DOM 缓存
-// ============================================================
-const API = '/macdv';
 const $ = id => document.getElementById(id);
-const dom = {
-    statusDot: $('status-dot'), statusText: $('status-text'),
-    line: $('v-line'), sig: $('v-sig'), hist: $('v-hist'),
-    type: $('v-type'), strength: $('v-strength'), reason: $('v-reason'),
-};
 
 // ============================================================
-//  图表初始化
+//  图表
 // ============================================================
 let chart1, chart2;
 let serCandle, serLine, serSig, serHist, serOb, serOs;
@@ -130,7 +119,6 @@ function init() {
         upColor:'#089981',downColor:'#f23645',borderDownColor:'#f23645',borderUpColor:'#089981',
         wickDownColor:'#f23645',wickUpColor:'#089981',
     });
-
     chart2 = LightweightCharts.createChart($('macdv-chart'), {
         layout: {background:{color:'#1e222d'},textColor:'#d1d4dc'},
         grid: {vertLines:{color:'#2a2e39'},horzLines:{color:'#2a2e39'}},
@@ -144,10 +132,13 @@ function init() {
     serOb   = chart2.addLineSeries({color:'#f23645',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
     serOs   = chart2.addLineSeries({color:'#089981',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
 
-    // K 线 → MACD 单向同步
-    chart1.timeScale().subscribeVisibleTimeRangeChange(() => {
-        const r = chart1.timeScale().getVisibleRange();
-        if (r) chart2.timeScale().setVisibleRange(r);
+    // 双向逻辑索引同步
+    var syncing = false;
+    chart1.timeScale().subscribeVisibleLogicalRangeChange(function(r) {
+        if (!syncing && r) { syncing = true; chart2.timeScale().setVisibleLogicalRange(r); syncing = false; }
+    });
+    chart2.timeScale().subscribeVisibleLogicalRangeChange(function(r) {
+        if (!syncing && r) { syncing = true; chart1.timeScale().setVisibleLogicalRange(r); syncing = false; }
     });
 }
 
@@ -155,26 +146,35 @@ function init() {
 //  数据获取
 // ============================================================
 function params() {
-    const g = id => $(id).value;
     return {
-        symbol:g('symbol-select'),interval:g('interval-select'),limit:g('limit-select'),
-        fastLen:g('fast-len'),slowLen:g('slow-len'),signalLen:g('signal-len'),atrLen:g('atr-len'),
-        overbought:parseFloat(g('overbought')),oversold:parseFloat(g('oversold')),
+        symbol:$('symbol-select').value, interval:$('interval-select').value, limit:$('limit-select').value,
+        fastLen:$('fast-len').value, slowLen:$('slow-len').value, signalLen:$('signal-len').value, atrLen:$('atr-len').value,
+        overbought:parseFloat($('overbought').value), oversold:parseFloat($('oversold').value),
     };
 }
 
-async function fetchData() {
-    const p = params();
-    const url = `${API}/data?symbol=${p.symbol}&interval=${p.interval}&limit=${p.limit}`
-        + `&fastLen=${p.fastLen}&slowLen=${p.slowLen}&signalLen=${p.signalLen}&atrLen=${p.atrLen}`
-        + `&overbought=${p.overbought}&oversold=${p.oversold}`;
-    const r = await fetch(url);
-    if (!r.ok) throw new Error('后端错误 ' + r.status);
-    return r.json();
+async function refresh() {
+    $('status-dot').className = 'dot loading';
+    $('status-text').textContent = '加载中...';
+    try {
+        const p = params();
+        const url = '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval + '&limit=' + p.limit
+            + '&fastLen=' + p.fastLen + '&slowLen=' + p.slowLen + '&signalLen=' + p.signalLen + '&atrLen=' + p.atrLen
+            + '&overbought=' + p.overbought + '&oversold=' + p.oversold;
+        const data = await (await fetch(url)).json();
+        render(data);
+        const n = data.klines.length;
+        const v = data.macdv ? data.macdv.filter(x => x.macdV !== null).length : 0;
+        $('status-dot').className = 'dot connected';
+        $('status-text').textContent = n + ' 根 / MACD-V ' + v + ' 点';
+    } catch(e) {
+        $('status-dot').className = 'dot error';
+        $('status-text').textContent = '请求失败: ' + e.message;
+    }
 }
 
 // ============================================================
-//  渲染（一次性全量设置，Lightweight Charts 内部自动分批渲染）
+//  渲染
 // ============================================================
 function render(data) {
     const klines   = data.klines   || [];
@@ -184,7 +184,6 @@ function render(data) {
     const p = params();
     const ob = p.overbought, os = p.oversold;
 
-    // — 构建 MACD-V 数据 —
     const line = [], sig = [], hist = [];
     let prevH = null;
     for (let i = 0; i < macdvArr.length; i++) {
@@ -198,7 +197,6 @@ function render(data) {
         prevH = r.hist;
     }
 
-    // — 构建买卖标记 —
     const markers = [];
     for (let i = 0; i < signals.length; i++) {
         const s = signals[i];
@@ -209,15 +207,11 @@ function render(data) {
         else if (s.subType === 'death_cross') txt = 'S';
         else if (s.subType === 'oversold') txt = 'OS';
         else if (s.subType === 'overbought') txt = 'OB';
-        markers.push({
-            time:s.time, position:buy?'belowBar':'aboveBar',
-            color:buy?'#089981':'#f23645',
-            shape:obos?'circle':(buy?'arrowUp':'arrowDown'),
-            text:txt, size:obos?1.0:1.5,
-        });
+        markers.push({time:s.time, position:buy?'belowBar':'aboveBar',
+            color:buy?'#089981':'#f23645', shape:obos?'circle':(buy?'arrowUp':'arrowDown'),
+            text:txt, size:obos?1.0:1.5});
     }
 
-    // — 参考线数据（覆盖全部 K 线时间范围，让 MACD 图知道完整时间轴） —
     let obArr = [], osArr = [];
     if (klines.length > 0) {
         const n = klines.length;
@@ -230,7 +224,6 @@ function render(data) {
         }
     }
 
-    // — 一次性设置所有数据（图书馆内部批量渲染，不卡 UI） —
     serCandle.setData(klines);
     serLine.setData(line);
     serSig.setData(sig);
@@ -239,65 +232,40 @@ function render(data) {
     serOs.setData(osArr);
     serCandle.setMarkers(markers);
 
-    // — 时间轴对齐 —
     if (klines.length > 0) {
-        const from = klines[0].time, to = klines[klines.length - 1].time;
-        chart1.timeScale().setVisibleRange({from, to});
-        chart2.timeScale().setVisibleRange({from, to});
+        chart1.timeScale().fitContent();
+        chart2.timeScale().fitContent();
     }
 
-    // — 信号面板 —
     if (latest.macdvLine !== undefined) {
-        dom.line.textContent = latest.macdvLine.toFixed(2);
-        dom.sig.textContent  = latest.macdvSignal.toFixed(2);
-        dom.hist.textContent = latest.macdvHist.toFixed(2);
-        dom.line.className = 'value' + (latest.macdvLine > ob ? ' overbought' : latest.macdvLine < os ? ' oversold' : '');
-        dom.hist.className = 'value' + (latest.macdvHist >= 0 ? ' bull' : ' bear');
-
+        $('v-line').textContent = latest.macdvLine.toFixed(2);
+        $('v-sig').textContent  = latest.macdvSignal.toFixed(2);
+        $('v-hist').textContent = latest.macdvHist.toFixed(2);
+        $('v-line').className = 'value' + (latest.macdvLine > ob ? ' overbought' : latest.macdvLine < os ? ' oversold' : '');
+        $('v-hist').className = 'value' + (latest.macdvHist >= 0 ? ' bull' : ' bear');
         if (latest.type === 'BUY' && latest.strength >= 0.25) {
-            dom.type.textContent = '🟢 买入'; dom.type.className = 'value bull';
-            dom.strength.textContent = (latest.strength * 100).toFixed(0) + '%';
-            dom.reason.textContent = latest.reason || '-';
+            $('v-type').textContent = '🟢 买入'; $('v-type').className = 'value bull';
+            $('v-strength').textContent = (latest.strength * 100).toFixed(0) + '%';
+            $('v-reason').textContent = latest.reason || '-';
         } else if (latest.type === 'SELL' && latest.strength >= 0.25) {
-            dom.type.textContent = '🔴 卖出'; dom.type.className = 'value bear';
-            dom.strength.textContent = (latest.strength * 100).toFixed(0) + '%';
-            dom.reason.textContent = latest.reason || '-';
+            $('v-type').textContent = '🔴 卖出'; $('v-type').className = 'value bear';
+            $('v-strength').textContent = (latest.strength * 100).toFixed(0) + '%';
+            $('v-reason').textContent = latest.reason || '-';
         } else {
-            dom.type.textContent = '⚪ 观望'; dom.type.className = 'value neutral';
-            dom.strength.textContent = '-'; dom.reason.textContent = '-';
+            $('v-type').textContent = '⚪ 观望'; $('v-type').className = 'value neutral';
+            $('v-strength').textContent = '-'; $('v-reason').textContent = '-';
         }
     }
 }
 
 // ============================================================
-//  控制
+//  启动
 // ============================================================
-function setStatus(state, text) {
-    dom.statusDot.className = 'dot ' + state;
-    dom.statusText.textContent = text;
-}
-
-let timer = null;
-
-async function refresh() {
-    setStatus('loading', '请求中...');
-    try {
-        const data = await fetchData();
-        render(data);
-        const n = data.klines.length;
-        const valid = data.macdv ? data.macdv.filter(r => r.macdV !== null).length : 0;
-        setStatus('connected', n + ' 根 ' + params().interval + ' K 线 | MACD-V ' + valid + ' 点有效');
-    } catch (err) {
-        setStatus('error', err.message);
-    }
-}
-
-$('refresh-btn').addEventListener('click', refresh);
-document.querySelectorAll('.params select, .params input').forEach(el => el.addEventListener('change', refresh));
-
 init();
 refresh();
-timer = setInterval(refresh, 60000);
+$('refresh-btn').addEventListener('click', refresh);
+document.querySelectorAll('.params select, .params input').forEach(el => el.addEventListener('change', refresh));
+setInterval(refresh, 60000);
 </script>
 </body>
 </html>

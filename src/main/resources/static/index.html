@@ -75,8 +75,8 @@ body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFo
 <div class="param-group"><label>慢线</label><input type="number" id="slow-len" value="26" min="1"></div>
 <div class="param-group"><label>信号</label><input type="number" id="signal-len" value="9" min="1"></div>
 <div class="param-group"><label>ATR</label><input type="number" id="atr-len" value="26" min="1"></div>
-<div class="param-group"><label>超买</label><input type="number" id="overbought" value="150"></div>
-<div class="param-group"><label>超卖</label><input type="number" id="oversold" value="-150"></div>
+<div class="param-group"><label>开多(d)</label><input type="number" id="d-th" value="-100"></div>
+<div class="param-group"><label>开空(k)</label><input type="number" id="k-th" value="100"></div>
 </div>
 <button id="refresh-btn">刷新</button>
 <div class="status"><span class="dot loading" id="status-dot"></span><span id="status-text">加载中...</span></div>
@@ -105,7 +105,7 @@ const $ = id => document.getElementById(id);
 //  图表
 // ============================================================
 let chart1, chart2;
-let serCandle, serLine, serSig, serHist, serOb, serOs;
+let serCandle, serLine, serSig, serHist, serKth, serDth;
 
 function init() {
     chart1 = LightweightCharts.createChart($('candlestick-chart'), {
@@ -129,8 +129,8 @@ function init() {
     serHist = chart2.addHistogramSeries({priceFormat:{type:'price',precision:2,minMove:0.01},priceLineVisible:false,lastValueVisible:false});
     serLine = chart2.addLineSeries({color:'#2962FF',lineWidth:2,priceLineVisible:false,lastValueVisible:true});
     serSig  = chart2.addLineSeries({color:'#FF6D00',lineWidth:2,priceLineVisible:false,lastValueVisible:true});
-    serOb   = chart2.addLineSeries({color:'#f23645',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
-    serOs   = chart2.addLineSeries({color:'#089981',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+    serKth   = chart2.addLineSeries({color:'#f23645',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
+    serDth   = chart2.addLineSeries({color:'#089981',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
 
     // 双向逻辑索引同步
     var syncing = false;
@@ -149,7 +149,7 @@ function params() {
     return {
         symbol:$('symbol-select').value, interval:$('interval-select').value, limit:$('limit-select').value,
         fastLen:$('fast-len').value, slowLen:$('slow-len').value, signalLen:$('signal-len').value, atrLen:$('atr-len').value,
-        overbought:parseFloat($('overbought').value), oversold:parseFloat($('oversold').value),
+        dTh:parseInt($('d-th').value), kTh:parseInt($('k-th').value)
     };
 }
 
@@ -160,7 +160,7 @@ async function refresh() {
         const p = params();
         const url = '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval + '&limit=' + p.limit
             + '&fastLen=' + p.fastLen + '&slowLen=' + p.slowLen + '&signalLen=' + p.signalLen + '&atrLen=' + p.atrLen
-            + '&overbought=' + p.overbought + '&oversold=' + p.oversold;
+            + '&dTh=' + p.dTh + '&kTh=' + p.kTh;
         const data = await (await fetch(url)).json();
         render(data);
         const n = data.klines.length;
@@ -182,7 +182,7 @@ function render(data) {
     const signals  = data.signals  || [];
     const latest   = data.latestSignal || {};
     const p = params();
-    const ob = p.overbought, os = p.oversold;
+    const dTh = p.dTh, kTh = p.kTh;
 
     const line = [], sig = [], hist = [];
     let prevH = null;
@@ -200,16 +200,15 @@ function render(data) {
     const markers = [];
     for (let i = 0; i < signals.length; i++) {
         const s = signals[i];
-        const buy = s.type === 'BUY';
-        const obos = s.subType === 'oversold' || s.subType === 'overbought';
-        let txt = '';
-        if (s.subType === 'golden_cross') txt = 'B';
-        else if (s.subType === 'death_cross') txt = 'S';
-        else if (s.subType === 'oversold') txt = 'OS';
-        else if (s.subType === 'overbought') txt = 'OB';
-        markers.push({time:s.time, position:buy?'belowBar':'aboveBar',
-            color:buy?'#089981':'#f23645', shape:obos?'circle':(buy?'arrowUp':'arrowDown'),
-            text:txt, size:obos?1.0:1.5});
+        const isOpen = s.type === 'd' || s.type === 'k';
+        const isLong = s.type === 'd' || s.type === 'pd';
+        let pos = 'belowBar';
+        let col = '#089981';
+        let shp = 'arrowUp';
+        if (s.type === 'k') { pos = 'aboveBar'; col = '#f23645'; shp = 'arrowDown'; }
+        if (s.type === 'pd') { pos = 'aboveBar'; col = '#FFA500'; shp = 'circle'; }
+        if (s.type === 'pk') { pos = 'belowBar'; col = '#FFA500'; shp = 'circle'; }
+        markers.push({time:s.time, position:pos, color:col, shape:shp, text:s.type.toUpperCase(), size:1.2});
     }
 
     let obArr = [], osArr = [];
@@ -219,8 +218,8 @@ function render(data) {
         osArr = new Array(n);
         for (let i = 0; i < n; i++) {
             const t = klines[i].time;
-            obArr[i] = {time:t, value:ob};
-            osArr[i] = {time:t, value:os};
+            obArr[i] = {time:t, value:kTh};
+            osArr[i] = {time:t, value:dTh};
         }
     }
 
@@ -228,8 +227,8 @@ function render(data) {
     serLine.setData(line);
     serSig.setData(sig);
     serHist.setData(hist);
-    serOb.setData(obArr);
-    serOs.setData(osArr);
+    serKth.setData(obArr);
+    serDth.setData(osArr);
     serCandle.setMarkers(markers);
 
     if (klines.length > 0) {
@@ -241,19 +240,30 @@ function render(data) {
         $('v-line').textContent = latest.macdvLine.toFixed(2);
         $('v-sig').textContent  = latest.macdvSignal.toFixed(2);
         $('v-hist').textContent = latest.macdvHist.toFixed(2);
-        $('v-line').className = 'value' + (latest.macdvLine > ob ? ' overbought' : latest.macdvLine < os ? ' oversold' : '');
+        $('v-line').className = 'value' + (latest.macdvLine > p.kTh ? ' overbought' : latest.macdvLine < p.dTh ? ' oversold' : '');
         $('v-hist').className = 'value' + (latest.macdvHist >= 0 ? ' bull' : ' bear');
-        if (latest.type === 'BUY' && latest.strength >= 0.25) {
-            $('v-type').textContent = '🟢 买入'; $('v-type').className = 'value bull';
-            $('v-strength').textContent = (latest.strength * 100).toFixed(0) + '%';
+        const sigType = latest.type || 'HOLD';
+        const sigStrength = latest.strength || 0;
+        if (sigType === 'd') {
+            $('v-type').textContent = '🟢 开多(d)'; $('v-type').className = 'value bull';
+            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
             $('v-reason').textContent = latest.reason || '-';
-        } else if (latest.type === 'SELL' && latest.strength >= 0.25) {
-            $('v-type').textContent = '🔴 卖出'; $('v-type').className = 'value bear';
-            $('v-strength').textContent = (latest.strength * 100).toFixed(0) + '%';
+        } else if (sigType === 'k') {
+            $('v-type').textContent = '🔴 开空(k)'; $('v-type').className = 'value bear';
+            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
+            $('v-reason').textContent = latest.reason || '-';
+        } else if (sigType === 'pd') {
+            $('v-type').textContent = '🟡 平多(pd)'; $('v-type').className = 'value neutral';
+            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
+            $('v-reason').textContent = latest.reason || '-';
+        } else if (sigType === 'pk') {
+            $('v-type').textContent = '🟡 平空(pk)'; $('v-type').className = 'value neutral';
+            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
             $('v-reason').textContent = latest.reason || '-';
         } else {
             $('v-type').textContent = '⚪ 观望'; $('v-type').className = 'value neutral';
-            $('v-strength').textContent = '-'; $('v-reason').textContent = '-';
+            $('v-strength').textContent = '-';
+            $('v-reason').textContent = latest.reason || '-';
         }
     }
 }

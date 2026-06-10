@@ -33,35 +33,39 @@ public class MACDVController {
 
     /**
      * 直接运行 main 方法获取数据（不依赖 Spring 容器）。
-     * @param args [symbol, interval, limit, fastLen, slowLen, signalLen, atrLen, overbought, oversold]
+     * @param args [symbol, interval, limit, fastLen, slowLen, signalLen, atrLen, dTh, kTh]
      */
     public static void main(String[] args) throws Exception {
         // 默认参数
         String symbol     = "BTCUSDT";
         String interval   = "1h";
-        int limit         = 100;
+        int limit         = 1000;
         int fastLen       = 12;
         int slowLen       = 26;
         int signalLen     = 9;
         int atrLen        = 26;
-        int overbought    = 150;
-        int oversold      = -150;
+        int dTh           = MACDVSignalGenerator.DEFAULT_D_TH;
+        int kTh           = MACDVSignalGenerator.DEFAULT_K_TH;
+        boolean trendFilter = MACDVSignalGenerator.DEFAULT_TREND_FILTER;
+        int minHoldBars    = MACDVSignalGenerator.DEFAULT_MIN_HOLD_BARS;
 
-        if (args.length >= 1) symbol     = args[0];
-        if (args.length >= 2) interval   = args[1];
-        if (args.length >= 3) limit      = Integer.parseInt(args[2]);
-        if (args.length >= 4) fastLen    = Integer.parseInt(args[3]);
-        if (args.length >= 5) slowLen    = Integer.parseInt(args[4]);
-        if (args.length >= 6) signalLen  = Integer.parseInt(args[5]);
-        if (args.length >= 7) atrLen     = Integer.parseInt(args[6]);
-        if (args.length >= 8) overbought = Integer.parseInt(args[7]);
-        if (args.length >= 9) oversold   = Integer.parseInt(args[8]);
+        if (args.length >= 1) symbol       = args[0];
+        if (args.length >= 2) interval     = args[1];
+        if (args.length >= 3) limit        = Integer.parseInt(args[2]);
+        if (args.length >= 4) fastLen      = Integer.parseInt(args[3]);
+        if (args.length >= 5) slowLen      = Integer.parseInt(args[4]);
+        if (args.length >= 6) signalLen    = Integer.parseInt(args[5]);
+        if (args.length >= 7) atrLen       = Integer.parseInt(args[6]);
+        if (args.length >= 8) dTh          = Integer.parseInt(args[7]);
+        if (args.length >= 9) kTh          = Integer.parseInt(args[8]);
+        if (args.length >= 10) trendFilter = Boolean.parseBoolean(args[9]);
+        if (args.length >= 11) minHoldBars = Integer.parseInt(args[10]);
 
         // 手动组装依赖（不启动 Spring）
         MACDVCalculator calc = new MACDVCalculator();
         MACDVSignalGenerator sig = new MACDVSignalGenerator();
 
-        // SQLite 数据源（路径解析逻辑与 DataSourceConfig 一致）
+        // SQLite 数据源
         String userDir = System.getProperty("user.dir");
         String dbDir = new java.io.File(userDir).getName().equals("qw-agent-line")
                 ? userDir + "/data"
@@ -77,7 +81,7 @@ public class MACDVController {
         Map<String, Object> data = service.getChartData(
                 symbol, interval, limit,
                 fastLen, slowLen, signalLen, atrLen,
-                overbought, oversold);
+                dTh, kTh, trendFilter, minHoldBars);
         long elapsed = System.currentTimeMillis() - start;
 
         // 打印统计
@@ -86,15 +90,31 @@ public class MACDVController {
         long v = ((java.util.List<?>) data.get("macdv")).stream()
                 .filter(r -> ((Map<String, Object>) r).get("macdV") != null).count();
         int s = ((java.util.List<?>) data.get("signals")).size();
-        System.out.println("===== MACD-V 数据 =====");
+        System.out.println("===== MACD-V 信号 =====");
         System.out.println("K 线: " + k + " 条");
         System.out.println("MACD-V: " + m + " 条（有效 " + v + " 点）");
-        System.out.println("买卖信号: " + s + " 个");
+        System.out.println("d/pd/k/pk 信号: " + s + " 个");
+        System.out.println("dTh=" + dTh + ", kTh=" + kTh);
         System.out.println("耗时: " + elapsed + "ms");
         System.out.println();
 
+        // 输出统计摘要，不输出全部JSON
+        long dCnt = data.get("signals") != null ? ((java.util.List<?>) data.get("signals")).stream()
+                .filter(r -> "d".equals(((Map<String, Object>) r).get("type"))).count() : 0;
+        long pdCnt = data.get("signals") != null ? ((java.util.List<?>) data.get("signals")).stream()
+                .filter(r -> "pd".equals(((Map<String, Object>) r).get("type"))).count() : 0;
+        long kCnt = data.get("signals") != null ? ((java.util.List<?>) data.get("signals")).stream()
+                .filter(r -> "k".equals(((Map<String, Object>) r).get("type"))).count() : 0;
+        long pkCnt = data.get("signals") != null ? ((java.util.List<?>) data.get("signals")).stream()
+                .filter(r -> "pk".equals(((Map<String, Object>) r).get("type"))).count() : 0;
+        System.out.println("d(开多)=" + dCnt + ", pd(平多)=" + pdCnt
+                + ", k(开空)=" + kCnt + ", pk(平空)=" + pkCnt);
+        System.out.println("最新信号: " + ((Map<String, Object>) data.get("latestSignal")).get("type")
+                + " - " + ((Map<String, Object>) data.get("latestSignal")).get("reason"));
+
         // 输出完整 JSON
         ObjectMapper mapper = new ObjectMapper();
+        System.out.println();
         System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(data));
     }
 
@@ -108,10 +128,21 @@ public class MACDVController {
      * @param slowLen    慢线 EMA 周期（默认 26）
      * @param signalLen  信号线 EMA 周期（默认 9）
      * @param atrLen     ATR 周期（默认 26）
-     * @param overbought 超买阈值（默认 150）
-     * @param oversold   超卖阈值（默认 -150）
+     * @param dTh        开多阈值（默认 -100）
+     * @param kTh        开空阈值（默认 100）
+     * @param trendFilter 趋势过滤（默认 true，MACDV>0只做多,<0只做空）
+     * @param minHoldBars 最小持仓K线数（默认 3）
      * @return 包含 klines / macdv / signals / latestSignal 的 JSON
      */
+    /**
+     * 重定向到图表页面 (根路径或 /chart)。
+     */
+    @GetMapping("/")
+    public org.springframework.http.ResponseEntity<Void> redirectToChart() {
+        java.net.URI uri = java.net.URI.create("/index.html");
+        return org.springframework.http.ResponseEntity.status(302).location(uri).build();
+    }
+
     @GetMapping("/data")
     public ResponseEntity<Map<String, Object>> getData(
             @RequestParam(defaultValue = "BTCUSDT") String symbol,
@@ -121,13 +152,15 @@ public class MACDVController {
             @RequestParam(defaultValue = "26") int slowLen,
             @RequestParam(defaultValue = "9") int signalLen,
             @RequestParam(defaultValue = "26") int atrLen,
-            @RequestParam(defaultValue = "150") int overbought,
-            @RequestParam(defaultValue = "-150") int oversold) {
+            @RequestParam(defaultValue = "-100") int dTh,
+            @RequestParam(defaultValue = "100") int kTh,
+            @RequestParam(defaultValue = "true") boolean trendFilter,
+            @RequestParam(defaultValue = "3") int minHoldBars) {
 
         Map<String, Object> data = macdvService.getChartData(
                 symbol, interval, limit,
                 fastLen, slowLen, signalLen, atrLen,
-                overbought, oversold);
+                dTh, kTh, trendFilter, minHoldBars);
 
         return ResponseEntity.ok(data);
     }

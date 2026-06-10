@@ -10,179 +10,213 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * MACD-V 买卖信号生成器 —— 基于指标序列产生交易信号。
+ * MACD-V 买卖信号生成器 —— 基于 MACDV 区间 + Hist 形态。
  * <p>
- * 信号来源（与 Pine Script "MACD-V" 一致）：
+ * 信号类型：
  * <ul>
- *   <li><b>金叉 / 死叉</b> — MACD-V 线上穿/下穿 Signal 线，权重 0.45</li>
- *   <li><b>超买 / 超卖</b> — MACD-V 线超过 ±150 阈值，权重 0.25</li>
- *   <li><b>柱状图趋势</b> — 柱状图方向及零轴穿越确认动量，权重 0.30</li>
+ *   <li><b>d (开多)</b> — MACDV 低于阈值 + Hist V底</li>
+ *   <li><b>pd (平多)</b> — Hist 倒V顶（需满足最小持仓K线数）</li>
+ *   <li><b>k (开空)</b> — MACDV 高于阈值 + Hist 倒V顶</li>
+ *   <li><b>pk (平空)</b> — Hist V底（需满足最小持仓K线数）</li>
  * </ul>
+ * <p>
+ * 趋势过滤：当启用时，MACDV>0 只允许做多，MACDV&lt;0 只允许做空。
  */
 @Component
 public class MACDVSignalGenerator {
 
-    /** 超买阈值（默认 150） */
-    public static final int DEFAULT_OVERBOUGHT = 150;
+    /** 开多阈值：MACDV 低于此值考虑开多 */
+    public static final int DEFAULT_D_TH = -100;
 
-    /** 超卖阈值（默认 -150） */
-    public static final int DEFAULT_OVERSOLD = -150;
+    /** 开空阈值：MACDV 高于此值考虑开空 */
+    public static final int DEFAULT_K_TH = 100;
 
-    /** 最小信号强度，低于此值不触发买卖 */
-    private static final double MIN_STRENGTH = 0.25;
+    /** 默认使用趋势过滤 */
+    public static final boolean DEFAULT_TREND_FILTER = true;
+
+    /** 默认最小持仓K线数 */
+    public static final int DEFAULT_MIN_HOLD_BARS = 3;
 
     // ==================== 批量信号 ====================
 
     /**
-     * 遍历 MACD-V 序列，检测所有历史买卖点。
+     * 遍历 MACD-V 序列，检测所有 d/pd/k/pk 信号。
      *
-     * @param points     MACD-V 指标序列
-     * @param overbought 超买阈值
-     * @param oversold   超卖阈值
+     * @param points       MACD-V 指标序列
+     * @param dTh          开多阈值 (MACDV < dTh + HistV底 → d)
+     * @param kTh          开空阈值 (MACDV > kTh + Hist倒V顶 → k)
+     * @param trendFilter  趋势过滤: true=MACDV>0只做多, MACDV<0只做空
+     * @param minHoldBars  最小持仓K线数(平仓信号需持仓≥此值才触发)
+     * @param klineData    K 线数据（当前未使用，保留接口兼容）
      * @return 买卖信号列表
      */
-    public List<TradeSignal> generateBatch(List<MACDVPoint> points, int overbought, int oversold, List<Map<String, Object>> klineData) {
+    public List<TradeSignal> generateBatch(List<MACDVPoint> points, int dTh, int kTh,
+                                            boolean trendFilter, int minHoldBars,
+                                            List<Map<String, Object>> klineData) {
         List<TradeSignal> signals = new ArrayList<>();
 
-        for (int i = 1; i < points.size(); i++) {
+        // 状态跟踪：记录每笔开仓的索引
+        String state = "NONE";
+        int entryIdx = -1;
+
+        for (int i = 2; i < points.size(); i++) {
             MACDVPoint cur = points.get(i);
             MACDVPoint prev = points.get(i - 1);
+            MACDVPoint prev2 = points.get(i - 2);
 
-            if (!cur.isValid() || !prev.isValid()) continue;
+            if (!cur.isValid() || !prev.isValid() || !prev2.isValid()) continue;
 
             double cm = cur.getMacdV().doubleValue();
-            double cs = cur.getSignal().doubleValue();
-            double pm = prev.getMacdV().doubleValue();
-            double ps = prev.getSignal().doubleValue();
+            double h  = cur.getHist().doubleValue();
+            double h1 = prev.getHist().doubleValue();
+            double h2 = prev2.getHist().doubleValue();
 
-            // 金叉：MACD-V 线下方向上穿越 Signal 线
-            if (pm < ps && cm >= cs) {
-                signals.add(new TradeSignal(cur.getTime(), "BUY", "golden_cross", "金叉", 0.72));
-            }
-            // 死叉：MACD-V 线上方向下穿越 Signal 线
-            if (pm >= ps && cm < cs) {
-                signals.add(new TradeSignal(cur.getTime(), "SELL", "death_cross", "死叉", 0.72));
-            }
-            // 进入超卖区（低于阈值后看多）
-            if (pm >= oversold && cm < oversold) {
-                signals.add(new TradeSignal(cur.getTime(), "BUY", "oversold", "超卖", 0.55));
-            }
-            // 进入超买区（高于阈值后看空）
-            if (pm <= overbought && cm > overbought) {
-                signals.add(new TradeSignal(cur.getTime(), "SELL", "overbought", "超买", 0.55));
+            boolean histVBottom = h2 > h1 && h1 < h;  // Hist V底
+            boolean histVTop    = h2 < h1 && h1 > h;  // Hist 倒V顶
+
+            // 趋势过滤：不在极端方向开逆势单
+            // isD: 开多条件 — 不启用过滤时需 MACDV < dTh；启用时需 MACDV > -50（不是极度看空）
+            // isK: 开空条件 — 不启用过滤时需 MACDV > kTh；启用时需 MACDV < 50（不是极度看多）
+            boolean isD = !trendFilter ? (cm < dTh) : (cm > -50);
+            boolean isK = !trendFilter ? (cm > kTh) : (cm < 50);
+
+            // === 状态机 ===
+            if ("NONE".equals(state)) {
+                // d (开多): 超卖 + HistV底
+                if (isD && histVBottom) {
+                    signals.add(new TradeSignal(cur.getTime(), "d", "d", "开多",
+                            round2(0.45 + 0.20 * Math.min(1.0, (dTh - cm) / 100.0))));
+                    state = "LONG";
+                    entryIdx = i;
+                }
+                // k (开空): 超买 + Hist倒V顶
+                else if (isK && histVTop) {
+                    signals.add(new TradeSignal(cur.getTime(), "k", "k", "开空",
+                            round2(0.45 + 0.20 * Math.min(1.0, (cm - kTh) / 100.0))));
+                    state = "SHORT";
+                    entryIdx = i;
+                }
+            } else if ("LONG".equals(state)) {
+                boolean heldLongEnough = (i - entryIdx) >= minHoldBars;
+                // pd (平多): Hist倒V顶 + 持仓足够久
+                if (histVTop && heldLongEnough) {
+                    signals.add(new TradeSignal(cur.getTime(), "pd", "pd", "平多", 0.45));
+                    state = "NONE";
+                }
+            } else if ("SHORT".equals(state)) {
+                boolean heldLongEnough = (i - entryIdx) >= minHoldBars;
+                // pk (平空): HistV底 + 持仓足够久
+                if (histVBottom && heldLongEnough) {
+                    signals.add(new TradeSignal(cur.getTime(), "pk", "pk", "平空", 0.45));
+                    state = "NONE";
+                }
             }
         }
 
         return signals;
     }
 
-    // ==================== 最新综合信号 ====================
+    // ==================== 最新综合信号（带状态跟踪） ====================
 
     /**
-     * 根据最新的两个有效指标点，综合评估当前的买卖方向。
+     * 根据全部指标点，模拟状态机得到最新的持仓状态和信号。
      *
-     * @param points     全部 MACD-V 点
-     * @param overbought 超买阈值
-     * @param oversold   超卖阈值
-     * @return 综合信号结果
+     * @param points      全部 MACD-V 点
+     * @param dTh         开多阈值
+     * @param kTh         开空阈值
+     * @param trendFilter 趋势过滤
+     * @param minHoldBars 最小持仓K线数
+     * @return 最新综合信号结果
      */
-    public LatestSignal evaluateLatest(List<MACDVPoint> points, int overbought, int oversold) {
-        // 找到最后一个有效点和它的前一个有效点
-        MACDVPoint latest = null;
-        MACDVPoint prev = null;
+    public LatestSignal evaluateLatest(List<MACDVPoint> points, int dTh, int kTh,
+                                        boolean trendFilter, int minHoldBars) {
+        String state = "NONE";
+        String lastSignalType = "HOLD";
+        String lastReason = "中性";
+        double lastStrength = 0;
+        int entryIdx = -1;
 
+        // 找到最后有效点用于数值展示
+        MACDVPoint latest = null;
         for (int i = points.size() - 1; i >= 0; i--) {
-            MACDVPoint p = points.get(i);
-            if (p.isValid()) {
-                if (latest == null) {
-                    latest = p;
-                } else if (prev == null) {
-                    prev = p;
-                    break;
-                }
+            if (points.get(i).isValid()) {
+                latest = points.get(i);
+                break;
             }
         }
-
         if (latest == null) {
             return new LatestSignal("HOLD", 0, "无数据", 0, 0, 0);
         }
 
-        // 提取数值
-        double macdV  = latest.getMacdV().doubleValue();
-        double signal = latest.getSignal().doubleValue();
-        double hist   = latest.getHist().doubleValue();
+        double curMacdV = latest.getMacdV().doubleValue();
+        double curSignal = latest.getSignal().doubleValue();
+        double curHist = latest.getHist().doubleValue();
 
-        double pMacdV = prev != null ? prev.getMacdV().doubleValue()  : macdV;
-        double pSig   = prev != null ? prev.getSignal().doubleValue() : signal;
-        double pHist  = prev != null ? prev.getHist().doubleValue()   : hist;
+        // 状态机遍历
+        for (int i = 2; i < points.size(); i++) {
+            MACDVPoint cur = points.get(i);
+            MACDVPoint prev = points.get(i - 1);
+            MACDVPoint prev2 = points.get(i - 2);
 
-        // 三个维度加权评分
-        double bullScore = 0;
-        double bearScore = 0;
-        List<String> reasons = new ArrayList<>();
+            if (!cur.isValid() || !prev.isValid() || !prev2.isValid()) continue;
 
-        // 1. 金叉 / 死叉（权重 0.45）
-        if (pMacdV < pSig && macdV >= signal) {
-            bullScore += 0.45;
-            reasons.add("金叉");
-        } else if (pMacdV >= pSig && macdV < signal) {
-            bearScore += 0.45;
-            reasons.add("死叉");
-        }
+            double cm = cur.getMacdV().doubleValue();
+            double h  = cur.getHist().doubleValue();
+            double h1 = prev.getHist().doubleValue();
+            double h2 = prev2.getHist().doubleValue();
 
-        // 2. 超买 / 超卖（权重 0.25）
-        if (macdV < oversold) {
-            double intensity = Math.min(1.0, (oversold - macdV) / 150.0);
-            bullScore += 0.25 * intensity;
-            reasons.add("超卖");
-        } else if (macdV > overbought) {
-            double intensity = Math.min(1.0, (macdV - overbought) / 150.0);
-            bearScore += 0.25 * intensity;
-            reasons.add("超买");
-        }
+            boolean histVBottom = h2 > h1 && h1 < h;
+            boolean histVTop    = h2 < h1 && h1 > h;
 
-        // 3. 柱状图趋势（权重 0.30）
-        if (hist > 0) {
-            double intensity = Math.min(1.0, hist / 100.0);
-            bullScore += 0.30 * intensity;
-            if (pHist <= 0) {
-                bullScore += 0.09;
-                reasons.add("柱状图翻正");
+            // 趋势过滤（与 generateBatch 一致）
+            boolean isD = !trendFilter ? (cm < dTh) : (cm > -50);
+            boolean isK = !trendFilter ? (cm > kTh) : (cm < 50);
+
+            if ("NONE".equals(state)) {
+                if (isD && histVBottom) {
+                    state = "LONG";
+                    entryIdx = i;
+                    lastSignalType = "d";
+                    lastReason = "开多";
+                    lastStrength = round2(0.45 + 0.20 * Math.min(1.0, (dTh - cm) / 100.0));
+                } else if (isK && histVTop) {
+                    state = "SHORT";
+                    entryIdx = i;
+                    lastSignalType = "k";
+                    lastReason = "开空";
+                    lastStrength = round2(0.45 + 0.20 * Math.min(1.0, (cm - kTh) / 100.0));
+                }
+            } else if ("LONG".equals(state) && histVTop && (i - entryIdx) >= minHoldBars) {
+                state = "NONE";
+                lastSignalType = "pd";
+                lastReason = "平多";
+                lastStrength = 0.45;
+            } else if ("SHORT".equals(state) && histVBottom && (i - entryIdx) >= minHoldBars) {
+                state = "NONE";
+                lastSignalType = "pk";
+                lastReason = "平空";
+                lastStrength = 0.45;
             }
-        } else if (hist < 0) {
-            double intensity = Math.min(1.0, Math.abs(hist) / 100.0);
-            bearScore += 0.30 * intensity;
-            if (pHist >= 0) {
-                bearScore += 0.09;
-                reasons.add("柱状图翻负");
-            }
         }
 
-        // 综合判定
-        String type;
-        double strength;
-        if (bullScore > bearScore && bullScore >= MIN_STRENGTH) {
-            type = "BUY";
-            strength = Math.min(1.0, bullScore);
-        } else if (bearScore > bullScore && bearScore >= MIN_STRENGTH) {
-            type = "SELL";
-            strength = Math.min(1.0, bearScore);
-        } else {
-            type = "HOLD";
-            strength = 0;
+        if ("LONG".equals(state)) {
+            lastSignalType = "d(持仓)";
+            lastReason = "持多中";
+        } else if ("SHORT".equals(state)) {
+            lastSignalType = "k(持仓)";
+            lastReason = "持空中";
         }
 
         return new LatestSignal(
-                type,
-                strength,
-                reasons.isEmpty() ? "中性" : String.join("+", reasons),
-                round2(macdV),
-                round2(signal),
-                round2(hist)
+                lastSignalType,
+                lastStrength,
+                lastReason,
+                round2(curMacdV),
+                round2(curSignal),
+                round2(curHist)
         );
     }
 
-    /** 保留两位小数 */
     private double round2(double v) {
         return Math.round(v * 100.0) / 100.0;
     }

@@ -22,7 +22,7 @@ import java.util.*;
  * <ol>
  *   <li>从币安拉取 K 线数据（优先从本地 SQLite 缓存读取）</li>
  *   <li>计算 MACD-V 指标（优先从本地 SQLite 缓存读取）</li>
- *   <li>生成买卖信号</li>
+ *   <li>生成 d/pd/k/pk 买卖信号</li>
  *   <li>组装前端所需的 JSON 数据</li>
  * </ol>
  */
@@ -60,7 +60,7 @@ public class MACDVService {
      */
     public Map<String, Object> getChartData(String symbol, String interval, int limit,
                                              int fastLen, int slowLen, int signalLen, int atrLen,
-                                             int overbought, int oversold) {
+                                             int dTh, int kTh, boolean trendFilter, int minHoldBars) {
 
         // 1. 获取 K 线（优先从本地 SQLite 缓存读取）
         List<Kline> klines = getCachedKlines(symbol, interval, limit);
@@ -68,14 +68,14 @@ public class MACDVService {
             return buildEmptyResult(symbol, interval);
         }
 
-        // 2. K 线转前端格式（for 循环替代 stream，减少对象分配）
+        // 2. K 线转前端格式
         int n = klines.size();
         List<Map<String, Object>> klineData = new ArrayList<>(n);
         for (int i = 0; i < n; i++) {
             klineData.add(toKlineMap(klines.get(i)));
         }
 
-        // 3. 获取 MACD-V 指标（优先从本地 SQLite 缓存读取）
+        // 3. 获取 MACD-V 指标
         List<MACDVPoint> macdvPoints = getCachedMACDVPoints(symbol, interval, klines,
                 fastLen, slowLen, signalLen, atrLen);
 
@@ -85,8 +85,9 @@ public class MACDVService {
             macdvData.add(toMACDVMap(macdvPoints.get(i)));
         }
 
-        // 5. 生成批量买卖信号
-        List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, overbought, oversold, klineData);
+        // 5. 生成批量买卖信号 (d/pd/k/pk)
+        List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
+                trendFilter, minHoldBars, klineData);
         int m = tradeSignals.size();
         List<Map<String, Object>> signalData = new ArrayList<>(m);
         for (int i = 0; i < m; i++) {
@@ -94,7 +95,8 @@ public class MACDVService {
         }
 
         // 6. 生成最新综合信号
-        LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, overbought, oversold);
+        LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
+                trendFilter, minHoldBars);
 
         // 7. 组装结果
         Map<String, Object> result = new LinkedHashMap<>();
@@ -110,9 +112,6 @@ public class MACDVService {
 
     // ==================== 本地缓存读取（KlineStore） ====================
 
-    /**
-     * 获取 K 线：优先从本地 SQLite 读取，缓存不足时从币安拉取并写入缓存。
-     */
     private List<Kline> getCachedKlines(String symbol, String interval, int limit) {
         int localCount = klineStore.countKlines(symbol, interval);
         if (localCount >= limit) {
@@ -129,9 +128,6 @@ public class MACDVService {
         return klineStore.getKlines(symbol, interval, limit);
     }
 
-    /**
-     * 获取 MACD-V：优先从本地 SQLite 读取，缓存不足时重新计算并写入缓存。
-     */
     private List<MACDVPoint> getCachedMACDVPoints(String symbol, String interval,
                                                    List<Kline> klines,
                                                    int fastLen, int slowLen,
@@ -151,9 +147,6 @@ public class MACDVService {
 
     // ==================== 币安 API 调用 ====================
 
-    /**
-     * 从币安拉取 K 线数据。
-     */
     @SuppressWarnings("unchecked")
     List<Kline> fetchKlines(String symbol, String interval, int limit) {
         try {

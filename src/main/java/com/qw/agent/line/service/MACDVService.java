@@ -147,10 +147,27 @@ public class MACDVService {
 
     // ==================== 币安 API 调用 ====================
 
+    /**
+     * 增量拉取：拉取指定时间戳之后的所有 K 线（最多 1000 条）。
+     * @param afterTime 毫秒时间戳，返回的数据 > afterTime
+     */
+    @SuppressWarnings("unchecked")
+    List<Kline> fetchKlinesAfter(String symbol, String interval, long afterTime) {
+        String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval
+                + "&startTime=" + (afterTime + 1) + "&limit=1000";
+        return doFetchKlines(url);
+    }
+
     @SuppressWarnings("unchecked")
     List<Kline> fetchKlines(String symbol, String interval, int limit) {
+        String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval + "&limit=" + limit;
+        return doFetchKlines(url);
+    }
+
+    /** 执行 HTTP GET 请求并解析 K 线数据 */
+    @SuppressWarnings("unchecked")
+    private List<Kline> doFetchKlines(String url) {
         try {
-            String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval + "&limit=" + limit;
             HttpRequest req = HttpRequest.newBuilder()
                     .uri(URI.create(url))
                     .timeout(Duration.ofSeconds(10))

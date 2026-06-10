@@ -3,9 +3,11 @@ package com.qw.agent.line.controller;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.indicator.MACDVCalculator;
 import com.qw.agent.line.service.MACDVService;
+import com.qw.agent.line.store.KlineStore;
 import com.qw.agent.line.strategy.MACDVSignalGenerator;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.sqlite.SQLiteDataSource;
 
 import java.util.Map;
 
@@ -37,7 +39,7 @@ public class MACDVController {
         // 默认参数
         String symbol     = "BTCUSDT";
         String interval   = "1h";
-        int limit         = 1000;
+        int limit         = 100;
         int fastLen       = 12;
         int slowLen       = 26;
         int signalLen     = 9;
@@ -58,7 +60,18 @@ public class MACDVController {
         // 手动组装依赖（不启动 Spring）
         MACDVCalculator calc = new MACDVCalculator();
         MACDVSignalGenerator sig = new MACDVSignalGenerator();
-        MACDVService service = new MACDVService(calc, sig);
+
+        // SQLite 数据源（路径解析逻辑与 DataSourceConfig 一致）
+        String userDir = System.getProperty("user.dir");
+        String dbDir = new java.io.File(userDir).getName().equals("qw-agent-line")
+                ? userDir + "/data"
+                : userDir + "/qw-agent-line/data";
+        new java.io.File(dbDir).mkdirs();
+        SQLiteDataSource ds = new SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + dbDir + "/agent-line.db");
+        KlineStore klineStore = new KlineStore(ds);
+
+        MACDVService service = new MACDVService(calc, sig, klineStore);
 
         long start = System.currentTimeMillis();
         Map<String, Object> data = service.getChartData(

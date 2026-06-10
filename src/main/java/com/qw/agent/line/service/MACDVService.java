@@ -3,6 +3,7 @@ package com.qw.agent.line.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.indicator.MACDVCalculator;
 import com.qw.agent.line.model.*;
+import com.qw.agent.line.store.KlineStore;
 import com.qw.agent.line.strategy.MACDVSignalGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,8 +20,8 @@ import java.util.*;
 /**
  * MACD-V 业务服务 —— 编排整个流程：
  * <ol>
- *   <li>从币安拉取 K 线数据</li>
- *   <li>计算 MACD-V 指标</li>
+ *   <li>从币安拉取 K 线数据（优先从本地 SQLite 缓存读取）</li>
+ *   <li>计算 MACD-V 指标（优先从本地 SQLite 缓存读取）</li>
  *   <li>生成买卖信号</li>
  *   <li>组装前端所需的 JSON 数据</li>
  * </ol>
@@ -39,11 +40,14 @@ public class MACDVService {
     private final HttpClient httpClient;
     private final MACDVCalculator calculator;
     private final MACDVSignalGenerator signalGenerator;
+    private final KlineStore klineStore;
 
     public MACDVService(MACDVCalculator calculator,
-                        MACDVSignalGenerator signalGenerator) {
+                        MACDVSignalGenerator signalGenerator,
+                        KlineStore klineStore) {
         this.calculator = calculator;
         this.signalGenerator = signalGenerator;
+        this.klineStore = klineStore;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .build();
@@ -58,8 +62,8 @@ public class MACDVService {
                                              int fastLen, int slowLen, int signalLen, int atrLen,
                                              int overbought, int oversold) {
 
-        // 1. 从币安拉取 K 线
-        List<Kline> klines = fetchKlines(symbol, interval, Math.min(limit, 1000));
+        // 1. 获取 K 线（优先从本地 SQLite 缓存读取）
+        List<Kline> klines = getCachedKlines(symbol, interval, limit);
         if (klines.isEmpty()) {
             return buildEmptyResult(symbol, interval);
         }
@@ -71,8 +75,9 @@ public class MACDVService {
             klineData.add(toKlineMap(klines.get(i)));
         }
 
-        // 3. 计算 MACD-V 指标
-        List<MACDVPoint> macdvPoints = calculator.calculate(klines, fastLen, slowLen, signalLen, atrLen);
+        // 3. 获取 MACD-V 指标（优先从本地 SQLite 缓存读取）
+        List<MACDVPoint> macdvPoints = getCachedMACDVPoints(symbol, interval, klines,
+                fastLen, slowLen, signalLen, atrLen);
 
         // 4. 指标点转前端格式
         List<Map<String, Object>> macdvData = new ArrayList<>(n);
@@ -81,7 +86,7 @@ public class MACDVService {
         }
 
         // 5. 生成批量买卖信号
-        List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, overbought, oversold);
+        List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, overbought, oversold, klineData);
         int m = tradeSignals.size();
         List<Map<String, Object>> signalData = new ArrayList<>(m);
         for (int i = 0; i < m; i++) {
@@ -101,6 +106,47 @@ public class MACDVService {
         result.put("latestSignal", toLatestSignalMap(latest));
 
         return result;
+    }
+
+    // ==================== 本地缓存读取（KlineStore） ====================
+
+    /**
+     * 获取 K 线：优先从本地 SQLite 读取，缓存不足时从币安拉取并写入缓存。
+     */
+    private List<Kline> getCachedKlines(String symbol, String interval, int limit) {
+        int localCount = klineStore.countKlines(symbol, interval);
+        if (localCount >= limit) {
+            log.info("K 线缓存命中: {}_{} x{}", symbol, interval, limit);
+            return klineStore.getKlines(symbol, interval, limit);
+        }
+
+        log.info("K 线缓存不足: {}_{} (本地={}, 需要={})，从币安拉取",
+                symbol, interval, localCount, limit);
+        List<Kline> klines = fetchKlines(symbol, interval, Math.min(limit, 1000));
+        if (!klines.isEmpty()) {
+            klineStore.saveKlines(symbol, interval, klines);
+        }
+        return klineStore.getKlines(symbol, interval, limit);
+    }
+
+    /**
+     * 获取 MACD-V：优先从本地 SQLite 读取，缓存不足时重新计算并写入缓存。
+     */
+    private List<MACDVPoint> getCachedMACDVPoints(String symbol, String interval,
+                                                   List<Kline> klines,
+                                                   int fastLen, int slowLen,
+                                                   int signalLen, int atrLen) {
+        int localCount = klineStore.countMACDVPoints(symbol, interval);
+        if (localCount >= klines.size()) {
+            log.info("MACD-V 缓存命中: {}_{} x{}", symbol, interval, klines.size());
+            return klineStore.getMACDVPoints(symbol, interval);
+        }
+
+        log.info("MACD-V 缓存不足: {}_{} (本地={}, 需要={})，重新计算",
+                symbol, interval, localCount, klines.size());
+        List<MACDVPoint> points = calculator.calculate(klines, fastLen, slowLen, signalLen, atrLen);
+        klineStore.saveMACDVPoints(symbol, interval, points);
+        return points;
     }
 
     // ==================== 币安 API 调用 ====================

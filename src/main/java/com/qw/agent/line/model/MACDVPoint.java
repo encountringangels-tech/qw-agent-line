@@ -1,5 +1,9 @@
 package com.qw.agent.line.model;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 import java.math.BigDecimal;
 
 /**
@@ -12,6 +16,9 @@ import java.math.BigDecimal;
  *   <li><b>hist</b>   — 柱状图 = MACD-V − Signal</li>
  * </ul>
  */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class MACDVPoint {
 
     /** Unix 秒级时间戳 */
@@ -26,26 +33,8 @@ public class MACDVPoint {
     /** 柱状图值（可能为 null） */
     private BigDecimal hist;
 
-    public MACDVPoint() {}
-
-    public MACDVPoint(long time, BigDecimal macdV, BigDecimal signal, BigDecimal hist) {
-        this.time = time;
-        this.macdV = macdV;
-        this.signal = signal;
-        this.hist = hist;
-    }
-
     /** 该点数据是否有效（三个值都不为 null） */
     public boolean isValid() {
         return macdV != null && signal != null && hist != null;
     }
-
-    public long getTime() { return time; }
-    public void setTime(long time) { this.time = time; }
-    public BigDecimal getMacdV() { return macdV; }
-    public void setMacdV(BigDecimal macdV) { this.macdV = macdV; }
-    public BigDecimal getSignal() { return signal; }
-    public void setSignal(BigDecimal signal) { this.signal = signal; }
-    public BigDecimal getHist() { return hist; }
-    public void setHist(BigDecimal hist) { this.hist = hist; }
 }

@@ -1,8 +1,15 @@
 package com.qw.agent.line.model;
 
+import lombok.AllArgsConstructor;
+import lombok.Data;
+import lombok.NoArgsConstructor;
+
 /**
  * 买卖信号模型 —— 记录一次具体的买卖点事件。
  */
+@Data
+@NoArgsConstructor
+@AllArgsConstructor
 public class TradeSignal {
 
     /** 信号发生的时间（Unix 秒级时间戳） */
@@ -19,25 +26,4 @@ public class TradeSignal {
 
     /** 信号强度（0 ~ 1，越高越强） */
     private double strength;
-
-    public TradeSignal() {}
-
-    public TradeSignal(long time, String type, String subType, String reason, double strength) {
-        this.time = time;
-        this.type = type;
-        this.subType = subType;
-        this.reason = reason;
-        this.strength = strength;
-    }
-
-    public long getTime() { return time; }
-    public void setTime(long time) { this.time = time; }
-    public String getType() { return type; }
-    public void setType(String type) { this.type = type; }
-    public String getSubType() { return subType; }
-    public void setSubType(String subType) { this.subType = subType; }
-    public String getReason() { return reason; }
-    public void setReason(String reason) { this.reason = reason; }
-    public double getStrength() { return strength; }
-    public void setStrength(double strength) { this.strength = strength; }
 }

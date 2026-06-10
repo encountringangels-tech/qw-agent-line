@@ -7,6 +7,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * MACD-V 买卖信号生成器 —— 基于指标序列产生交易信号。
@@ -40,7 +41,7 @@ public class MACDVSignalGenerator {
      * @param oversold   超卖阈值
      * @return 买卖信号列表
      */
-    public List<TradeSignal> generateBatch(List<MACDVPoint> points, int overbought, int oversold) {
+    public List<TradeSignal> generateBatch(List<MACDVPoint> points, int overbought, int oversold, List<Map<String, Object>> klineData) {
         List<TradeSignal> signals = new ArrayList<>();
 
         for (int i = 1; i < points.size(); i++) {

@@ -68,8 +68,8 @@ body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFo
 <div class="param-group"><label>条数</label>
 <select id="limit-select">
 <option value="200">200</option>
-<option value="500">500</option>
-<option value="1000" selected>1000</option>
+<option value="500" selected>500</option>
+<option value="1000">1000</option>
 </select></div>
 <div class="param-group"><label>快线</label><input type="number" id="fast-len" value="12" min="1"></div>
 <div class="param-group"><label>慢线</label><input type="number" id="slow-len" value="26" min="1"></div>
@@ -107,6 +107,13 @@ const $ = id => document.getElementById(id);
 let chart1, chart2;
 let serCandle, serLine, serSig, serHist, serKth, serDth;
 
+// 全量已加载数据（初始 + 每次分页追加）
+let loadedKlines  = [];
+let loadedMacdv   = [];
+let loadedSignals = [];
+let loadedLatest  = null;
+let loadingHistory = false;
+
 function init() {
     chart1 = LightweightCharts.createChart($('candlestick-chart'), {
         layout: {background:{color:'#1e222d'},textColor:'#d1d4dc'},
@@ -132,10 +139,14 @@ function init() {
     serKth   = chart2.addLineSeries({color:'#f23645',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
     serDth   = chart2.addLineSeries({color:'#089981',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,priceLineVisible:false,lastValueVisible:false});
 
-    // 双向逻辑索引同步
+    // 双向逻辑索引同步 + 左滑自动加载更多
     var syncing = false;
     chart1.timeScale().subscribeVisibleLogicalRangeChange(function(r) {
         if (!syncing && r) { syncing = true; chart2.timeScale().setVisibleLogicalRange(r); syncing = false; }
+        // 滑动到最左端 10 根以内，自动加载历史
+        if (r && r.from <= 10 && !loadingHistory && loadedKlines.length > 0) {
+            loadMoreHistory();
+        }
     });
     chart2.timeScale().subscribeVisibleLogicalRangeChange(function(r) {
         if (!syncing && r) { syncing = true; chart1.timeScale().setVisibleLogicalRange(r); syncing = false; }
@@ -143,7 +154,7 @@ function init() {
 }
 
 // ============================================================
-//  数据获取
+//  参数
 // ============================================================
 function params() {
     return {
@@ -153,41 +164,69 @@ function params() {
     };
 }
 
+function baseUrl() {
+    const p = params();
+    return '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval
+        + '&fastLen=' + p.fastLen + '&slowLen=' + p.slowLen + '&signalLen=' + p.signalLen + '&atrLen=' + p.atrLen
+        + '&dTh=' + p.dTh + '&kTh=' + p.kTh;
+}
+
+// ============================================================
+//  初始加载 / 刷新（全量替换，含信号）
+// ============================================================
 async function refresh() {
+    loadingHistory = true;
     $('status-dot').className = 'dot loading';
     $('status-text').textContent = '加载中...';
     try {
-        const p = params();
-        const url = '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval + '&limit=' + p.limit
-            + '&fastLen=' + p.fastLen + '&slowLen=' + p.slowLen + '&signalLen=' + p.signalLen + '&atrLen=' + p.atrLen
-            + '&dTh=' + p.dTh + '&kTh=' + p.kTh;
+        const url = baseUrl() + '&limit=' + params().limit;
         const data = await (await fetch(url)).json();
-        render(data);
-        const n = data.klines.length;
-        const v = data.macdv ? data.macdv.filter(x => x.macdV !== null).length : 0;
-        $('status-dot').className = 'dot connected';
-        $('status-text').textContent = n + ' 根 / MACD-V ' + v + ' 点';
+        loadedKlines  = data.klines  || [];
+        loadedMacdv   = data.macdv   || [];
+        loadedSignals = data.signals || [];
+        loadedLatest  = data.latestSignal || {};
+        rebuild();
+        updateStatus();
     } catch(e) {
         $('status-dot').className = 'dot error';
         $('status-text').textContent = '请求失败: ' + e.message;
     }
+    loadingHistory = false;
 }
 
 // ============================================================
-//  渲染
+//  加载更多历史（左滑触发，追加到前面，不含信号）
 // ============================================================
-function render(data) {
-    const klines   = data.klines   || [];
-    const macdvArr = data.macdv    || [];
-    const signals  = data.signals  || [];
-    const latest   = data.latestSignal || {};
+async function loadMoreHistory() {
+    if (loadingHistory || loadedKlines.length === 0) return;
+    loadingHistory = true;
+    try {
+        const oldest = loadedKlines[0].time;
+        const url = baseUrl() + '&limit=500&before=' + oldest;
+        const data = await (await fetch(url)).json();
+        const newKlines = data.klines || [];
+        const newMacdv  = data.macdv  || [];
+        if (newKlines.length === 0) { loadingHistory = false; return; }
+
+        loadedKlines = newKlines.concat(loadedKlines);
+        loadedMacdv  = newMacdv.concat(loadedMacdv);
+        rebuild();
+        updateStatus();
+    } catch(e) { /* 静默 */ }
+    loadingHistory = false;
+}
+
+// ============================================================
+//  重新渲染图表（基于 loadedKlines / loadedMacdv / loadedSignals）
+// ============================================================
+function rebuild() {
     const p = params();
     const dTh = p.dTh, kTh = p.kTh;
 
     const line = [], sig = [], hist = [];
     let prevH = null;
-    for (let i = 0; i < macdvArr.length; i++) {
-        const r = macdvArr[i];
+    for (let i = 0; i < loadedMacdv.length; i++) {
+        const r = loadedMacdv[i];
         if (r.macdV === null) continue;
         line.push({time:r.time, value:r.macdV});
         sig.push({time:r.time, value:r.signal});
@@ -198,32 +237,28 @@ function render(data) {
     }
 
     const markers = [];
-    for (let i = 0; i < signals.length; i++) {
-        const s = signals[i];
-        const isOpen = s.type === 'd' || s.type === 'k';
-        const isLong = s.type === 'd' || s.type === 'pd';
-        let pos = 'belowBar';
-        let col = '#089981';
-        let shp = 'arrowUp';
-        if (s.type === 'k') { pos = 'aboveBar'; col = '#f23645'; shp = 'arrowDown'; }
+    for (let i = 0; i < loadedSignals.length; i++) {
+        const s = loadedSignals[i];
+        let pos = 'belowBar', col = '#089981', shp = 'arrowUp';
+        if (s.type === 'k')  { pos = 'aboveBar'; col = '#f23645'; shp = 'arrowDown'; }
         if (s.type === 'pd') { pos = 'aboveBar'; col = '#FFA500'; shp = 'circle'; }
         if (s.type === 'pk') { pos = 'belowBar'; col = '#FFA500'; shp = 'circle'; }
         markers.push({time:s.time, position:pos, color:col, shape:shp, text:s.type.toUpperCase(), size:1.2});
     }
 
     let obArr = [], osArr = [];
-    if (klines.length > 0) {
-        const n = klines.length;
+    if (loadedKlines.length > 0) {
+        const n = loadedKlines.length;
         obArr = new Array(n);
         osArr = new Array(n);
         for (let i = 0; i < n; i++) {
-            const t = klines[i].time;
+            const t = loadedKlines[i].time;
             obArr[i] = {time:t, value:kTh};
             osArr[i] = {time:t, value:dTh};
         }
     }
 
-    serCandle.setData(klines);
+    serCandle.setData(loadedKlines);
     serLine.setData(line);
     serSig.setData(sig);
     serHist.setData(hist);
@@ -231,41 +266,49 @@ function render(data) {
     serDth.setData(osArr);
     serCandle.setMarkers(markers);
 
-    if (klines.length > 0) {
+    if (loadedKlines.length > 0) {
         chart1.timeScale().fitContent();
         chart2.timeScale().fitContent();
     }
 
-    if (latest.macdvLine !== undefined) {
-        $('v-line').textContent = latest.macdvLine.toFixed(2);
-        $('v-sig').textContent  = latest.macdvSignal.toFixed(2);
-        $('v-hist').textContent = latest.macdvHist.toFixed(2);
-        $('v-line').className = 'value' + (latest.macdvLine > p.kTh ? ' overbought' : latest.macdvLine < p.dTh ? ' oversold' : '');
-        $('v-hist').className = 'value' + (latest.macdvHist >= 0 ? ' bull' : ' bear');
-        const sigType = latest.type || 'HOLD';
-        const sigStrength = latest.strength || 0;
-        if (sigType === 'd') {
+    // 底部信号面板（始终基于初始加载的 latestSignal）
+    if (loadedLatest && loadedLatest.macdvLine !== undefined) {
+        $('v-line').textContent = loadedLatest.macdvLine.toFixed(2);
+        $('v-sig').textContent  = loadedLatest.macdvSignal.toFixed(2);
+        $('v-hist').textContent = loadedLatest.macdvHist.toFixed(2);
+        $('v-line').className = 'value' + (loadedLatest.macdvLine > p.kTh ? ' overbought' : loadedLatest.macdvLine < p.dTh ? ' oversold' : '');
+        $('v-hist').className = 'value' + (loadedLatest.macdvHist >= 0 ? ' bull' : ' bear');
+        const st = loadedLatest.type || 'HOLD';
+        const ss = loadedLatest.strength || 0;
+        if (st === 'd') {
             $('v-type').textContent = '🟢 开多(d)'; $('v-type').className = 'value bull';
-            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
-            $('v-reason').textContent = latest.reason || '-';
-        } else if (sigType === 'k') {
+            $('v-strength').textContent = (ss * 100).toFixed(0) + '%';
+            $('v-reason').textContent = loadedLatest.reason || '-';
+        } else if (st === 'k') {
             $('v-type').textContent = '🔴 开空(k)'; $('v-type').className = 'value bear';
-            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
-            $('v-reason').textContent = latest.reason || '-';
-        } else if (sigType === 'pd') {
+            $('v-strength').textContent = (ss * 100).toFixed(0) + '%';
+            $('v-reason').textContent = loadedLatest.reason || '-';
+        } else if (st === 'pd') {
             $('v-type').textContent = '🟡 平多(pd)'; $('v-type').className = 'value neutral';
-            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
-            $('v-reason').textContent = latest.reason || '-';
-        } else if (sigType === 'pk') {
+            $('v-strength').textContent = (ss * 100).toFixed(0) + '%';
+            $('v-reason').textContent = loadedLatest.reason || '-';
+        } else if (st === 'pk') {
             $('v-type').textContent = '🟡 平空(pk)'; $('v-type').className = 'value neutral';
-            $('v-strength').textContent = (sigStrength * 100).toFixed(0) + '%';
-            $('v-reason').textContent = latest.reason || '-';
+            $('v-strength').textContent = (ss * 100).toFixed(0) + '%';
+            $('v-reason').textContent = loadedLatest.reason || '-';
         } else {
             $('v-type').textContent = '⚪ 观望'; $('v-type').className = 'value neutral';
             $('v-strength').textContent = '-';
-            $('v-reason').textContent = latest.reason || '-';
+            $('v-reason').textContent = loadedLatest.reason || '-';
         }
     }
+}
+
+function updateStatus() {
+    const n = loadedKlines.length;
+    const v = loadedMacdv.filter(x => x.macdV !== null).length;
+    $('status-dot').className = 'dot connected';
+    $('status-text').textContent = n + ' 根 / MACD-V ' + v + ' 点';
 }
 
 // ============================================================

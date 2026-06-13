@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.indicator.MACDVCalculator;
 import com.qw.agent.line.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.store.MultiTimeframeStrategy;
+import com.qw.agent.line.store.TradeDecision;
 import com.qw.agent.line.strategy.MACDVSignalGenerator;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -26,9 +28,12 @@ import java.util.Map;
 public class MACDVController {
 
     private final MACDVService macdvService;
+    private final MultiTimeframeStrategy mtfStrategy;
 
-    public MACDVController(MACDVService macdvService) {
+    public MACDVController(MACDVService macdvService,
+                           MultiTimeframeStrategy mtfStrategy) {
         this.macdvService = macdvService;
+        this.mtfStrategy = mtfStrategy;
     }
 
     /**
@@ -48,6 +53,8 @@ public class MACDVController {
         int kTh           = MACDVSignalGenerator.DEFAULT_K_TH;
         boolean trendFilter = MACDVSignalGenerator.DEFAULT_TREND_FILTER;
         int minHoldBars    = MACDVSignalGenerator.DEFAULT_MIN_HOLD_BARS;
+        int cooldownBars   = MACDVSignalGenerator.DEFAULT_COOLDOWN_BARS;
+        double minHistAmp  = MACDVSignalGenerator.DEFAULT_MIN_HIST_AMP;
 
         if (args.length >= 1) symbol       = args[0];
         if (args.length >= 2) interval     = args[1];
@@ -60,6 +67,8 @@ public class MACDVController {
         if (args.length >= 9) kTh          = Integer.parseInt(args[8]);
         if (args.length >= 10) trendFilter = Boolean.parseBoolean(args[9]);
         if (args.length >= 11) minHoldBars = Integer.parseInt(args[10]);
+        if (args.length >= 12) cooldownBars = Integer.parseInt(args[11]);
+        if (args.length >= 13) minHistAmp  = Double.parseDouble(args[12]);
 
         // 手动组装依赖（不启动 Spring）
         MACDVCalculator calc = new MACDVCalculator();
@@ -79,9 +88,10 @@ public class MACDVController {
 
         long start = System.currentTimeMillis();
         Map<String, Object> data = service.getChartData(
-                symbol, interval, limit,
+                symbol, interval, limit, 0,
                 fastLen, slowLen, signalLen, atrLen,
-                dTh, kTh, trendFilter, minHoldBars);
+                dTh, kTh, trendFilter, minHoldBars,
+                cooldownBars, minHistAmp);
         long elapsed = System.currentTimeMillis() - start;
 
         // 打印统计
@@ -147,7 +157,8 @@ public class MACDVController {
     public ResponseEntity<Map<String, Object>> getData(
             @RequestParam(defaultValue = "BTCUSDT") String symbol,
             @RequestParam(defaultValue = "1h") String interval,
-            @RequestParam(defaultValue = "1000") int limit,
+            @RequestParam(defaultValue = "500") int limit,
+            @RequestParam(defaultValue = "0") long before,
             @RequestParam(defaultValue = "12") int fastLen,
             @RequestParam(defaultValue = "26") int slowLen,
             @RequestParam(defaultValue = "9") int signalLen,
@@ -155,13 +166,51 @@ public class MACDVController {
             @RequestParam(defaultValue = "-100") int dTh,
             @RequestParam(defaultValue = "100") int kTh,
             @RequestParam(defaultValue = "true") boolean trendFilter,
-            @RequestParam(defaultValue = "3") int minHoldBars) {
+            @RequestParam(defaultValue = "3") int minHoldBars,
+            @RequestParam(defaultValue = "3") int cooldownBars,
+            @RequestParam(defaultValue = "0.03") double minHistAmp) {
 
         Map<String, Object> data = macdvService.getChartData(
-                symbol, interval, limit,
+                symbol, interval, limit, before,
                 fastLen, slowLen, signalLen, atrLen,
-                dTh, kTh, trendFilter, minHoldBars);
+                dTh, kTh, trendFilter, minHoldBars,
+                cooldownBars, minHistAmp);
 
         return ResponseEntity.ok(data);
+    }
+
+    /**
+     * 多周期策略决策 —— 返回下一根15min K线是否可以立即买卖。
+     *
+     * @param symbol 交易对（默认 BTCUSDT）
+     * @return TradeDecision JSON: { action, confidence, reason,
+     *          dailyMacdv, fourHourMacdv, oneHourMacdv, fifteenMinMacdv,
+     *          fiveMinMacdv, lastPrice }
+     */
+    @GetMapping("/decide")
+    public ResponseEntity<TradeDecision> decide(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        TradeDecision decision = mtfStrategy.decide(symbol);
+        return ResponseEntity.ok(decision);
+    }
+
+    /**
+     * 判断是否应平多（15min MACDV &gt; 80）。
+     */
+    @GetMapping("/should-close-long")
+    public ResponseEntity<Map<String, Object>> shouldCloseLong(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        boolean should = mtfStrategy.shouldCloseLong(symbol);
+        return ResponseEntity.ok(Map.of("symbol", symbol, "shouldCloseLong", should));
+    }
+
+    /**
+     * 判断是否应平空（15min MACDV &lt; -80）。
+     */
+    @GetMapping("/should-close-short")
+    public ResponseEntity<Map<String, Object>> shouldCloseShort(
+            @RequestParam(defaultValue = "BTCUSDT") String symbol) {
+        boolean should = mtfStrategy.shouldCloseShort(symbol);
+        return ResponseEntity.ok(Map.of("symbol", symbol, "shouldCloseShort", should));
     }
 }

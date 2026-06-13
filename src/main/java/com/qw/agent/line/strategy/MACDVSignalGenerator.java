@@ -37,6 +37,12 @@ public class MACDVSignalGenerator {
     /** 默认最小持仓K线数 */
     public static final int DEFAULT_MIN_HOLD_BARS = 3;
 
+    /** 平仓后冷却K线数（防止立即反向开单） */
+    public static final int DEFAULT_COOLDOWN_BARS = 3;
+
+    /** Histogram V形态最小振幅（过滤噪声） */
+    public static final double DEFAULT_MIN_HIST_AMP = 0.03;
+
     // ==================== 批量信号 ====================
 
     /**
@@ -47,17 +53,20 @@ public class MACDVSignalGenerator {
      * @param kTh          开空阈值 (MACDV > kTh + Hist倒V顶 → k)
      * @param trendFilter  趋势过滤: true=MACDV>0只做多, MACDV<0只做空
      * @param minHoldBars  最小持仓K线数(平仓信号需持仓≥此值才触发)
+     * @param cooldownBars 平仓后冷却K线数(冷却期内不重新开仓)
+     * @param minHistAmp   Hist V形态最小振幅(波谷/波峰两侧各需≥此值)
      * @param klineData    K 线数据（当前未使用，保留接口兼容）
      * @return 买卖信号列表
      */
     public List<TradeSignal> generateBatch(List<MACDVPoint> points, int dTh, int kTh,
                                             boolean trendFilter, int minHoldBars,
+                                            int cooldownBars, double minHistAmp,
                                             List<Map<String, Object>> klineData) {
         List<TradeSignal> signals = new ArrayList<>();
 
-        // 状态跟踪：记录每笔开仓的索引
         String state = "NONE";
         int entryIdx = -1;
+        int cooldown = 0;  // 剩余冷却K线数
 
         for (int i = 2; i < points.size(); i++) {
             MACDVPoint cur = points.get(i);
@@ -71,42 +80,49 @@ public class MACDVSignalGenerator {
             double h1 = prev.getHist().doubleValue();
             double h2 = prev2.getHist().doubleValue();
 
-            boolean histVBottom = h2 > h1 && h1 < h;  // Hist V底
-            boolean histVTop    = h2 < h1 && h1 > h;  // Hist 倒V顶
+            // V形态检测：要求波谷/波峰两侧各有 ≥ minHistAmp 的振幅
+            boolean histVBottom = h2 > h1 && h1 < h
+                    && (h2 - h1) >= minHistAmp && (h - h1) >= minHistAmp;
+            boolean histVTop    = h2 < h1 && h1 > h
+                    && (h1 - h2) >= minHistAmp && (h1 - h) >= minHistAmp;
 
             // 趋势过滤：MACDV > 0 只允许做多，MACDV < 0 只允许做空
             boolean isD = !trendFilter ? (cm < dTh) : (cm > 0);
             boolean isK = !trendFilter ? (cm > kTh) : (cm < 0);
 
+            // 冷却期倒计时
+            if (cooldown > 0) {
+                cooldown--;
+            }
+
             // === 状态机 ===
             if ("NONE".equals(state)) {
-                // d (开多): 超卖 + HistV底
+                if (cooldown > 0) continue;  // 冷却期中，不建新仓
+
                 if (isD && histVBottom) {
                     signals.add(new TradeSignal(cur.getTime(), "d", "d", "开多",
-                            round2(0.45 + 0.20 * Math.min(1.0, (dTh - cm) / 100.0))));
+                            calcStrength(cm, dTh, true)));
                     state = "LONG";
                     entryIdx = i;
-                }
-                // k (开空): 超买 + Hist倒V顶
-                else if (isK && histVTop) {
+                } else if (isK && histVTop) {
                     signals.add(new TradeSignal(cur.getTime(), "k", "k", "开空",
-                            round2(0.45 + 0.20 * Math.min(1.0, (cm - kTh) / 100.0))));
+                            calcStrength(cm, kTh, false)));
                     state = "SHORT";
                     entryIdx = i;
                 }
             } else if ("LONG".equals(state)) {
                 boolean heldLongEnough = (i - entryIdx) >= minHoldBars;
-                // pd (平多): Hist倒V顶 + 持仓足够久
                 if (histVTop && heldLongEnough) {
                     signals.add(new TradeSignal(cur.getTime(), "pd", "pd", "平多", 0.45));
                     state = "NONE";
+                    cooldown = cooldownBars;
                 }
             } else if ("SHORT".equals(state)) {
                 boolean heldLongEnough = (i - entryIdx) >= minHoldBars;
-                // pk (平空): HistV底 + 持仓足够久
                 if (histVBottom && heldLongEnough) {
                     signals.add(new TradeSignal(cur.getTime(), "pk", "pk", "平空", 0.45));
                     state = "NONE";
+                    cooldown = cooldownBars;
                 }
             }
         }
@@ -127,12 +143,14 @@ public class MACDVSignalGenerator {
      * @return 最新综合信号结果
      */
     public LatestSignal evaluateLatest(List<MACDVPoint> points, int dTh, int kTh,
-                                        boolean trendFilter, int minHoldBars) {
+                                        boolean trendFilter, int minHoldBars,
+                                        int cooldownBars, double minHistAmp) {
         String state = "NONE";
         String lastSignalType = "HOLD";
         String lastReason = "中性";
         double lastStrength = 0;
         int entryIdx = -1;
+        int cooldown = 0;
 
         // 找到最后有效点用于数值展示
         MACDVPoint latest = null;
@@ -163,37 +181,43 @@ public class MACDVSignalGenerator {
             double h1 = prev.getHist().doubleValue();
             double h2 = prev2.getHist().doubleValue();
 
-            boolean histVBottom = h2 > h1 && h1 < h;
-            boolean histVTop    = h2 < h1 && h1 > h;
+            boolean histVBottom = h2 > h1 && h1 < h
+                    && (h2 - h1) >= minHistAmp && (h - h1) >= minHistAmp;
+            boolean histVTop    = h2 < h1 && h1 > h
+                    && (h1 - h2) >= minHistAmp && (h1 - h) >= minHistAmp;
 
-            // 趋势过滤（与 generateBatch 一致）
             boolean isD = !trendFilter ? (cm < dTh) : (cm > 0);
             boolean isK = !trendFilter ? (cm > kTh) : (cm < 0);
 
+            if (cooldown > 0) cooldown--;
+
             if ("NONE".equals(state)) {
+                if (cooldown > 0) continue;
                 if (isD && histVBottom) {
                     state = "LONG";
                     entryIdx = i;
                     lastSignalType = "d";
                     lastReason = "开多";
-                    lastStrength = round2(0.45 + 0.20 * Math.min(1.0, (dTh - cm) / 100.0));
+                    lastStrength = calcStrength(cm, dTh, true);
                 } else if (isK && histVTop) {
                     state = "SHORT";
                     entryIdx = i;
                     lastSignalType = "k";
                     lastReason = "开空";
-                    lastStrength = round2(0.45 + 0.20 * Math.min(1.0, (cm - kTh) / 100.0));
+                    lastStrength = calcStrength(cm, kTh, false);
                 }
             } else if ("LONG".equals(state) && histVTop && (i - entryIdx) >= minHoldBars) {
                 state = "NONE";
                 lastSignalType = "pd";
                 lastReason = "平多";
                 lastStrength = 0.45;
+                cooldown = cooldownBars;
             } else if ("SHORT".equals(state) && histVBottom && (i - entryIdx) >= minHoldBars) {
                 state = "NONE";
                 lastSignalType = "pk";
                 lastReason = "平空";
                 lastStrength = 0.45;
+                cooldown = cooldownBars;
             }
         }
 
@@ -213,6 +237,12 @@ public class MACDVSignalGenerator {
                 round2(curSignal),
                 round2(curHist)
         );
+    }
+
+    /** 计算信号强度（0~1），值越大信号越可靠 */
+    private double calcStrength(double macdv, int threshold, boolean isLong) {
+        double dist = isLong ? (threshold - macdv) : (macdv - threshold);
+        return round2(0.45 + 0.20 * Math.min(1.0, Math.max(0, dist) / 100.0));
     }
 
     private double round2(double v) {

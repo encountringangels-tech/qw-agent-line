@@ -123,6 +123,21 @@ public class KlineStore {
         return result;
     }
 
+    /** 读取指定时间戳之前的 limit 条 K 线（按时间正序），用于前端分页加载历史数据 */
+    public List<Kline> getKlinesBefore(String symbol, String interval, long beforeTimeMs, int limit) {
+        String sql = """
+            SELECT open_time, open, high, low, close, volume
+            FROM kline
+            WHERE symbol = ? AND interval = ? AND open_time < ?
+            ORDER BY open_time DESC
+            LIMIT ?
+        """;
+
+        List<Kline> result = jdbc.query(sql, this::mapKline, symbol, interval, beforeTimeMs, limit);
+        Collections.reverse(result);
+        return result;
+    }
+
     /** 本地已有的最新一条 K 线开盘时间戳（毫秒），没有则返回 0 */
     public long getLatestOpenTime(String symbol, String interval) {
         String sql = "SELECT COALESCE(MAX(open_time), 0) FROM kline WHERE symbol = ? AND interval = ?";
@@ -135,6 +150,17 @@ public class KlineStore {
         String sql = "SELECT COUNT(*) FROM kline WHERE symbol = ? AND interval = ?";
         return Objects.requireNonNullElse(
                 jdbc.queryForObject(sql, Integer.class, symbol, interval), 0);
+    }
+
+    /** 删除所有数据（K 线 + MACD-V），用于完全重建 */
+    public void deleteAll() {
+        int kc = Objects.requireNonNullElse(
+                jdbc.queryForObject("SELECT COUNT(*) FROM kline", Integer.class), 0);
+        int mc = Objects.requireNonNullElse(
+                jdbc.queryForObject("SELECT COUNT(*) FROM macdv_point", Integer.class), 0);
+        jdbc.execute("DELETE FROM kline");
+        jdbc.execute("DELETE FROM macdv_point");
+        log.info("已删除全部数据: {} 条 K 线, {} 条 MACD-V 点", kc, mc);
     }
 
     // ==================== MACD-V 操作 ====================
@@ -170,11 +196,52 @@ public class KlineStore {
         return jdbc.query(sql, this::mapMACDVPoint, symbol, interval);
     }
 
+    /** 按时间范围读取 MACD-V 点（秒级时间戳，含两端），避免全量加载 */
+    public List<MACDVPoint> getMACDVPointsRange(String symbol, String interval,
+                                                 long fromTimeSec, long toTimeSec) {
+        String sql = """
+            SELECT time, macdV, signal, hist
+            FROM macdv_point
+            WHERE symbol = ? AND interval = ?
+              AND time >= ? AND time <= ?
+            ORDER BY time ASC
+        """;
+
+        return jdbc.query(sql, this::mapMACDVPoint, symbol, interval, fromTimeSec, toTimeSec);
+    }
+
     /** 本地 MACD-V 点数 */
     public int countMACDVPoints(String symbol, String interval) {
         String sql = "SELECT COUNT(*) FROM macdv_point WHERE symbol = ? AND interval = ?";
         return Objects.requireNonNullElse(
                 jdbc.queryForObject(sql, Integer.class, symbol, interval), 0);
+    }
+
+    /** 获取最新一条有效 MACD-V 点（避免全量加载） */
+    public MACDVPoint getLatestMACDVPoint(String symbol, String interval) {
+        String sql = """
+            SELECT time, macdV, signal, hist
+            FROM macdv_point
+            WHERE symbol = ? AND interval = ?
+              AND macdV IS NOT NULL
+            ORDER BY time DESC
+            LIMIT 1
+        """;
+        List<MACDVPoint> result = jdbc.query(sql, this::mapMACDVPoint, symbol, interval);
+        return result.isEmpty() ? null : result.get(0);
+    }
+
+    /** 获取最新一条 K 线（用于获取最新价格） */
+    public Kline getLatestKline(String symbol, String interval) {
+        String sql = """
+            SELECT open_time, open, high, low, close, volume
+            FROM kline
+            WHERE symbol = ? AND interval = ?
+            ORDER BY open_time DESC
+            LIMIT 1
+        """;
+        List<Kline> result = jdbc.query(sql, this::mapKline, symbol, interval);
+        return result.isEmpty() ? null : result.get(0);
     }
 
     /**

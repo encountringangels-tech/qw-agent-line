@@ -4,6 +4,8 @@ server:
 spring:
   application:
     name: qw-agent-line
+  jackson:
+    time-zone: Asia/Shanghai
 
 logging:
   level:

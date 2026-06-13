@@ -57,13 +57,24 @@ public class MACDVService {
 
     /**
      * 获取 MACD-V 图表的全部数据（K 线 + 指标 + 信号）。
+     *
+     * @param before Unix 秒级时间戳，>0 表示加载此时间之前的 K 线（分页模式，不含信号）
      */
     public Map<String, Object> getChartData(String symbol, String interval, int limit,
+                                             long before,
                                              int fastLen, int slowLen, int signalLen, int atrLen,
-                                             int dTh, int kTh, boolean trendFilter, int minHoldBars) {
+                                             int dTh, int kTh, boolean trendFilter, int minHoldBars,
+                                             int cooldownBars, double minHistAmp) {
 
-        // 1. 获取 K 线（优先从本地 SQLite 缓存读取）
-        List<Kline> klines = getCachedKlines(symbol, interval, limit);
+        // 1. 获取 K 线
+        List<Kline> klines;
+        if (before > 0) {
+            // 分页模式：加载指定时间之前的历史数据，纯 DB 读取
+            klines = klineStore.getKlinesBefore(symbol, interval, before * 1000, limit);
+        } else {
+            klines = getCachedKlines(symbol, interval, limit);
+        }
+
         if (klines.isEmpty()) {
             return buildEmptyResult(symbol, interval);
         }
@@ -76,8 +87,16 @@ public class MACDVService {
         }
 
         // 3. 获取 MACD-V 指标
-        List<MACDVPoint> macdvPoints = getCachedMACDVPoints(symbol, interval, klines,
-                fastLen, slowLen, signalLen, atrLen);
+        List<MACDVPoint> macdvPoints;
+        if (before > 0) {
+            // 分页模式：DB 层按时间范围直接查询，避免全量加载后内存过滤
+            long fromSec = klines.get(0).getOpenTime() / 1000;
+            long toSec = klines.get(n - 1).getOpenTime() / 1000;
+            macdvPoints = klineStore.getMACDVPointsRange(symbol, interval, fromSec, toSec);
+        } else {
+            macdvPoints = getCachedMACDVPoints(symbol, interval, klines,
+                    fastLen, slowLen, signalLen, atrLen);
+        }
 
         // 4. 指标点转前端格式
         List<Map<String, Object>> macdvData = new ArrayList<>(n);
@@ -85,27 +104,32 @@ public class MACDVService {
             macdvData.add(toMACDVMap(macdvPoints.get(i)));
         }
 
-        // 5. 生成批量买卖信号 (d/pd/k/pk)
-        List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
-                trendFilter, minHoldBars, klineData);
-        int m = tradeSignals.size();
-        List<Map<String, Object>> signalData = new ArrayList<>(m);
-        for (int i = 0; i < m; i++) {
-            signalData.add(toSignalMap(tradeSignals.get(i)));
-        }
-
-        // 6. 生成最新综合信号
-        LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
-                trendFilter, minHoldBars);
-
-        // 7. 组装结果
+        // 5. 组装结果
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("symbol", symbol);
         result.put("interval", interval);
         result.put("klines", klineData);
         result.put("macdv", macdvData);
-        result.put("signals", signalData);
-        result.put("latestSignal", toLatestSignalMap(latest));
+
+        if (before > 0) {
+            // 分页模式：不生成信号
+            result.put("signals", List.of());
+            result.put("latestSignal", Map.of("type", "HOLD", "strength", 0, "reason", "分页数据"));
+        } else {
+            // 完整模式：生成信号
+            List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
+                    trendFilter, minHoldBars, cooldownBars, minHistAmp, klineData);
+            int m = tradeSignals.size();
+            List<Map<String, Object>> signalData = new ArrayList<>(m);
+            for (int i = 0; i < m; i++) {
+                signalData.add(toSignalMap(tradeSignals.get(i)));
+            }
+            result.put("signals", signalData);
+
+            LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
+                    trendFilter, minHoldBars, cooldownBars, minHistAmp);
+            result.put("latestSignal", toLatestSignalMap(latest));
+        }
 
         return result;
     }
@@ -180,7 +204,10 @@ public class MACDVService {
         int localCount = klineStore.countMACDVPoints(symbol, interval);
         if (localCount >= klines.size()) {
             log.info("MACD-V 缓存命中: {}_{} x{}", symbol, interval, klines.size());
-            return klineStore.getMACDVPoints(symbol, interval);
+            // DB 层按时间范围直接查询，避免全量加载后内存过滤
+            long fromTime = klines.get(0).getOpenTime() / 1000;
+            long toTime = klines.get(klines.size() - 1).getOpenTime() / 1000;
+            return klineStore.getMACDVPointsRange(symbol, interval, fromTime, toTime);
         }
 
         log.info("MACD-V 缓存不足: {}_{} (本地={}, 需要={})，重新计算",
@@ -197,16 +224,69 @@ public class MACDVService {
      * @param afterTime 毫秒时间戳，返回的数据 > afterTime
      */
     @SuppressWarnings("unchecked")
-    List<Kline> fetchKlinesAfter(String symbol, String interval, long afterTime) {
+    public List<Kline> fetchKlinesAfter(String symbol, String interval, long afterTime) {
         String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval
                 + "&startTime=" + (afterTime + 1) + "&limit=1000";
         return doFetchKlines(url);
     }
 
     @SuppressWarnings("unchecked")
-    List<Kline> fetchKlines(String symbol, String interval, int limit) {
+    public List<Kline> fetchKlines(String symbol, String interval, int limit) {
         String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval + "&limit=" + limit;
         return doFetchKlines(url);
+    }
+
+    /**
+     * 分页拉取指定时间范围内的全部 K 线（自动处理币安 1000 条/次的分页限制）。
+     *
+     * @param symbol      交易对
+     * @param interval    K 线周期
+     * @param startTimeMs 起始毫秒时间戳（含）
+     * @param endTimeMs   结束毫秒时间戳（含），0 表示到当前时间
+     * @return 按时间正序排列的全部 K 线
+     */
+    @SuppressWarnings("unchecked")
+    public List<Kline> fetchKlinesRange(String symbol, String interval,
+                                        long startTimeMs, long endTimeMs) {
+        if (endTimeMs <= 0) {
+            endTimeMs = System.currentTimeMillis();
+        }
+
+        java.util.List<Kline> all = new java.util.ArrayList<>();
+        long nextStart = startTimeMs;
+        int page = 0;
+
+        while (true) {
+            String url = BINANCE_KLINE_URL
+                    + "?symbol=" + symbol
+                    + "&interval=" + interval
+                    + "&startTime=" + nextStart
+                    + "&endTime=" + endTimeMs
+                    + "&limit=1000";
+            List<Kline> batch = doFetchKlines(url);
+            if (batch.isEmpty()) break;
+
+            all.addAll(batch);
+            page++;
+            log.info("  分页拉取 [{}/{}] 第 {} 页: {} 条 (累计 {})",
+                    symbol, interval, page, batch.size(), all.size());
+
+            // 币安单次最多 1000；如果不足 1000 说明已拉完
+            if (batch.size() < 1000) break;
+
+            // 下一页起始时间 = 本批最后一根 K 线开仓时间 + 1ms
+            nextStart = batch.get(batch.size() - 1).getOpenTime() + 1;
+            if (nextStart > endTimeMs) break;
+
+            // 防止无限循环
+            if (page >= 5000) {
+                log.warn("分页拉取超过 5000 页，停止 [{}/{}]", symbol, interval);
+                break;
+            }
+        }
+
+        log.info("分页拉取完成 [{}/{}]: {} 条, {} 页", symbol, interval, all.size(), page);
+        return all;
     }
 
     /** 执行 HTTP GET 请求并解析 K 线数据 */

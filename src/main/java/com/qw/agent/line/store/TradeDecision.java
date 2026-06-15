@@ -40,6 +40,9 @@ public class TradeDecision {
     /** 最新价格 */
     private double lastPrice;
 
+    /** 建议杠杆倍数（1x/2x/3x），基于信号强度和趋势一致性计算 */
+    private int leverage = 1;
+
     // ===== Builder风格 =====
 
     public static TradeDecision of(String action, double confidence, String reason) {
@@ -60,6 +63,9 @@ public class TradeDecision {
 
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }
+
+    public int getLeverage() { return leverage; }
+    public void setLeverage(int leverage) { this.leverage = leverage; }
 
     public double getDailyMacdv() { return dailyMacdv; }
     public void setDailyMacdv(double dailyMacdv) { this.dailyMacdv = dailyMacdv; }
@@ -97,8 +103,8 @@ public class TradeDecision {
     /** 简短摘要 */
     @Override
     public String toString() {
-        return String.format("TradeDecision[%s confidence=%.0f%%] %s | D:%.1f 4H:%.1f 1H:%.1f 15m:%.1f 5m:%.1f",
-                action, confidence * 100, reason,
+        return String.format("TradeDecision[%s leverage=%dx confidence=%.0f%%] %s | D:%.1f 4H:%.1f 1H:%.1f 15m:%.1f 5m:%.1f",
+                action, leverage, confidence * 100, reason,
                 dailyMacdv, fourHourMacdv, oneHourMacdv, fifteenMinMacdv, fiveMinMacdv);
     }
 }

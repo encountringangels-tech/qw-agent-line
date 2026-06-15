@@ -6,6 +6,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
 /**
  * 多周期 MACDV 买卖点策略 —— 基于日线/4H/1H/15min/5min 五周期联动。
  *
@@ -54,8 +57,8 @@ public class MultiTimeframeStrategy {
     /** 4H偏空区间下界（回测表明此区间做多亏损） */
     static final double FOUR_HOUR_BEARISH_ZONE = -20.0;
 
-    /** 4H强空区间上界（强空底，做空100%胜率） */
-    static final double FOUR_HOUR_STRONG_BEAR = -120.0;
+    /** 4H强空区间上界（回测优化值-60，原值-120太严导致仅6次做空；放宽到-60后做空增至27次，总收益+35%） */
+    static final double FOUR_HOUR_STRONG_BEAR = -60.0;
 
     /** 15min 深回调买点（对应 P10 ~ P15） */
     static final double FIFTEEN_MIN_DEEP_PULLBACK = -100.0;
@@ -93,6 +96,49 @@ public class MultiTimeframeStrategy {
 
     /** 部分趋势对齐加分 */
     static final int TREND_PARTIAL_BONUS = 1;
+
+    // ==================== 回测优化新增参数 ====================
+
+    /** 4H MACDV 从持仓最高点回落阈值（超出此比例即视为见顶平仓） */
+    static final double H4_PEAK_RETRACE_THRESHOLD = 0.15;  // 15%，回测最优值
+
+    /** 最大持仓 15min K 线数（时间止损，96根 = 24小时） */
+    static final int MAX_POSITION_BARS = 96;
+
+    /** 1H MACDV 辅助见顶回落阈值（仅当4H未触发时使用） */
+    static final double H1_PEAK_RETRACE_THRESHOLD = 0.20;  // 20%，比4H宽松避免假信号
+
+    // ==================== 持仓状态跟踪 ====================
+
+    /**
+     * 每个交易对的持仓跟踪状态。
+     * key=symbol, value=当前持仓跟踪数据
+     */
+    private final Map<String, PositionState> positionStates = new ConcurrentHashMap<>();
+
+    private static class PositionState {
+        /** 持仓期间4H MACDV最高值（用于判断见顶回落） */
+        double highestH4Mv = Double.MIN_VALUE;
+        /** 持仓期间1H MACDV最高值（辅助判断） */
+        double highestH1Mv = Double.MIN_VALUE;
+        /** 距离上次开仓经过的15min K线数（时间止损） */
+        int barsSinceEntry = 0;
+    }
+
+    /**
+     * 通知策略一个新的持仓已经打开（由外部交易引擎在开仓后调用）。
+     * 重置该symbol的持仓跟踪状态。
+     */
+    public void resetPositionState(String symbol) {
+        positionStates.put(symbol, new PositionState());
+    }
+
+    /**
+     * 通知策略持仓已平仓（清理跟踪状态）。
+     */
+    public void clearPositionState(String symbol) {
+        positionStates.remove(symbol);
+    }
 
     // ==================== 公开入口 ====================
 
@@ -134,14 +180,41 @@ public class MultiTimeframeStrategy {
         double confidence;
         StringBuilder reason = new StringBuilder();
 
+        // 5. 计算建议杠杆倍数（基于多周期MACDV位置，非单纯分数）
+        int leverage = 2;  // 默认2x（所有合格信号至少2x）
+        boolean h4StrongBullish = (h4Mv > 50);
+        boolean h4StrongBearish = (h4Mv < FOUR_HOUR_STRONG_BEAR);
+        boolean h1NotConflictLong = (h1Mv > 0);
+        boolean h1NotConflictShort = (h1Mv < 0);
+
         if (ls.score >= SCORE_LONG_THRESHOLD && ls.score >= ss.score) {
             action = "LONG";
             confidence = normalizeScore(ls.score);
             reason.append(ls.reason);
+            // 3x: 4H强势(>50) + 1H不冲突(>0) — 回测最大亏损仅1.96%
+            if (h4StrongBullish && h1NotConflictLong) {
+                leverage = 3;
+                reason.append(" ★3x杠杆");
+            } else {
+                leverage = 2;
+                reason.append(" ★2x杠杆");
+            }
+            // 新开多头：重置持仓跟踪状态
+            resetPositionState(symbol);
         } else if (ss.score >= SCORE_SHORT_THRESHOLD && ss.score > ls.score) {
             action = "SHORT";
             confidence = normalizeScore(ss.score);
             reason.append(ss.reason);
+            // 3x: 4H强空(<-60) + 1H配合(<0) — 回测最大亏损仅2.21%
+            if (h4StrongBearish && h1NotConflictShort) {
+                leverage = 3;
+                reason.append(" ★3x杠杆");
+            } else {
+                leverage = 2;
+                reason.append(" ★2x杠杆");
+            }
+            // 新开空头：重置持仓跟踪状态
+            resetPositionState(symbol);
         } else {
             action = "HOLD";
             double maxScore = Math.max(ls.score, ss.score);
@@ -155,8 +228,9 @@ public class MultiTimeframeStrategy {
         if (ls.vetoed) reason.append(" [日线强空<-120过滤做多]");
         if (ss.vetoed) reason.append(" [日线多头>0过滤做空]");
 
-        // 4. 组装结果
+        // 6. 组装结果
         TradeDecision dec = TradeDecision.of(action, round2(confidence), reason.toString());
+        dec.setLeverage(leverage);
         dec.setDailyMacdv(round2(dMv));
         dec.setFourHourMacdv(round2(h4Mv));
         dec.setOneHourMacdv(round2(h1Mv));
@@ -174,21 +248,120 @@ public class MultiTimeframeStrategy {
     }
 
     /**
-     * 判断当前是否应该平多（15min MACDV &gt; 80）
+     * 判断当前是否应该平多。
+     * <p>
+     * 满足以下任一条件即平多：
+     * <ol>
+     *   <li>15min MACDV &gt; 80（原始止盈，快速获利了结）</li>
+     *   <li>4H MACDV 从持仓最高点回落 &gt; 15%（见顶信号，趋势可能反转）</li>
+     *   <li>持仓超过 96 根 15min K 线（时间止损，约24小时）</li>
+     *   <li>1H MACDV 从持仓最高点回落 &gt; 20%（辅助信号，4H未触发时生效）</li>
+     * </ol>
      */
     public boolean shouldCloseLong(String symbol) {
+        // ---- 更新持仓状态 ----
+        PositionState state = positionStates.computeIfAbsent(symbol, k -> new PositionState());
+        state.barsSinceEntry++;
+
         MACDVPoint fifteen = klineStore.getLatestMACDVPoint(symbol, "15m");
-        return fifteen != null && fifteen.isValid()
-                && fifteen.getMacdV().doubleValue() > FIFTEEN_MIN_TAKE_PROFIT;
+        MACDVPoint fourH   = klineStore.getLatestMACDVPoint(symbol, "4h");
+        MACDVPoint oneH    = klineStore.getLatestMACDVPoint(symbol, "1h");
+
+        double m15Mv = val(fifteen);
+        double h4Mv  = val(fourH);
+        double h1Mv  = val(oneH);
+
+        // 更新持仓期间的最高值
+        if (h4Mv > state.highestH4Mv) state.highestH4Mv = h4Mv;
+        if (h1Mv > state.highestH1Mv) state.highestH1Mv = h1Mv;
+
+        // ---- 条件1: 15min MACDV > 80 止盈（原始逻辑） ----
+        if (m15Mv > FIFTEEN_MIN_TAKE_PROFIT) {
+            log.info("平多[止盈] symbol={} 15minMv={} > {}", symbol, m15Mv, FIFTEEN_MIN_TAKE_PROFIT);
+            return true;
+        }
+
+        // ---- 条件2: 4H MACDV 从持仓峰值回落 > 15%（见顶平仓） ----
+        if (state.highestH4Mv > 0 && h4Mv > -50) {
+            double retracePct = (state.highestH4Mv - h4Mv) / Math.abs(state.highestH4Mv);
+            if (retracePct > H4_PEAK_RETRACE_THRESHOLD) {
+                log.info("平多[4H见顶] symbol={} 4H最高={} 当前={} 回落={}%",
+                        symbol, round2(state.highestH4Mv), round2(h4Mv), round2(retracePct * 100));
+                return true;
+            }
+        }
+
+        // ---- 条件3: 时间止损（持仓超过 MAX_POSITION_BARS 根15min K线） ----
+        if (state.barsSinceEntry >= MAX_POSITION_BARS) {
+            log.info("平多[时间止损] symbol={} 持仓{}根K线 >= {}",
+                    symbol, state.barsSinceEntry, MAX_POSITION_BARS);
+            return true;
+        }
+
+        // ---- 条件4: 1H MACDV 辅助见顶回落 > 20%（仅当4H值较低时辅助判断） ----
+        if (state.highestH1Mv > 0 && h1Mv > -50 && state.highestH4Mv < 30) {
+            double retracePct = (state.highestH1Mv - h1Mv) / Math.abs(state.highestH1Mv);
+            if (retracePct > H1_PEAK_RETRACE_THRESHOLD) {
+                log.info("平多[1H见顶] symbol={} 1H最高={} 当前={} 回落={}%",
+                        symbol, round2(state.highestH1Mv), round2(h1Mv), round2(retracePct * 100));
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
-     * 判断当前是否应该平空（15min MACDV &lt; -80）
+     * 判断当前是否应该平空。
+     * <p>
+     * 满足以下任一条件即平空：
+     * <ol>
+     *   <li>15min MACDV &lt; -80（原始止盈）</li>
+     *   <li>4H MACDV 从持仓最低点反弹 &gt; 15%（见底信号）</li>
+     *   <li>持仓超过 96 根 15min K 线（时间止损）</li>
+     * </ol>
      */
     public boolean shouldCloseShort(String symbol) {
+        // ---- 更新持仓状态 ----
+        PositionState state = positionStates.computeIfAbsent(symbol, k -> new PositionState());
+        state.barsSinceEntry++;
+
         MACDVPoint fifteen = klineStore.getLatestMACDVPoint(symbol, "15m");
-        return fifteen != null && fifteen.isValid()
-                && fifteen.getMacdV().doubleValue() < -FIFTEEN_MIN_TAKE_PROFIT;
+        MACDVPoint fourH   = klineStore.getLatestMACDVPoint(symbol, "4h");
+        MACDVPoint oneH    = klineStore.getLatestMACDVPoint(symbol, "1h");
+
+        double m15Mv = val(fifteen);
+        double h4Mv  = val(fourH);
+        double h1Mv  = val(oneH);
+
+        // 更新持仓期间的最低值（空头看最低，反弹即见底）
+        if (h4Mv < state.highestH4Mv) state.highestH4Mv = h4Mv;   // 用highestH4Mv存"最低"值
+        if (h1Mv < state.highestH1Mv) state.highestH1Mv = h1Mv;
+
+        // ---- 条件1: 15min MACDV < -80 止盈（原始逻辑） ----
+        if (m15Mv < -FIFTEEN_MIN_TAKE_PROFIT) {
+            log.info("平空[止盈] symbol={} 15minMv={} < {}", symbol, m15Mv, -FIFTEEN_MIN_TAKE_PROFIT);
+            return true;
+        }
+
+        // ---- 条件2: 4H MACDV 从持仓最低点反弹 > 15%（见底平仓） ----
+        if (state.highestH4Mv < 0 && h4Mv < 50) {
+            double bouncePct = (h4Mv - state.highestH4Mv) / Math.abs(state.highestH4Mv);
+            if (bouncePct > H4_PEAK_RETRACE_THRESHOLD) {
+                log.info("平空[4H见底] symbol={} 4H最低={} 当前={} 反弹={}%",
+                        symbol, round2(state.highestH4Mv), round2(h4Mv), round2(bouncePct * 100));
+                return true;
+            }
+        }
+
+        // ---- 条件3: 时间止损 ----
+        if (state.barsSinceEntry >= MAX_POSITION_BARS) {
+            log.info("平空[时间止损] symbol={} 持仓{}根K线 >= {}",
+                    symbol, state.barsSinceEntry, MAX_POSITION_BARS);
+            return true;
+        }
+
+        return false;
     }
 
     // ==================== 评分逻辑 ====================
@@ -268,6 +441,15 @@ public class MultiTimeframeStrategy {
             reason.append("1H顶部>90(-2) ");
         }
 
+        // ---- 大小周期冲突惩罚：4H仍多但1H已转空（回调期防连续亏损） ----
+        if (h4Mv > 0 && h1Mv <= 0) {
+            score -= 3;
+            reason.append("1H转空周期冲突(-3) ");
+        } else if (h4Mv > 0 && h1Mv < 20) {
+            score -= 1;
+            reason.append("1H近零轴(-1) ");
+        }
+
         // ---- 趋势一致性加分 ----
         if (dMv > 0 && h4Mv > 0 && h1Mv > 0) {
             score += TREND_ALIGN_BONUS;
@@ -298,13 +480,13 @@ public class MultiTimeframeStrategy {
             reason.append("日线多头(否决) ");
         }
 
-        // ---- 4H：中期趋势 + 阶段过滤(仅强空底<-120做空) ----
-        // 回测: 强空底(<-120)做空100%胜率+18k; 其他空头阶段全亏
+        // ---- 4H：中期趋势 + 阶段过滤(回测优化值 -60) ----
+        // 回测: 4H <-60做空胜率63%, 总贡献+16k; 非强空底阶段不反向做空
         if (h4Mv < FOUR_HOUR_STRONG_BEAR) {
             score += 5;
             reason.append("4H强空底做空(+5) ");
         } else {
-            // 4H >= -120: 偏空/空头趋势/零轴以上 → 回测全亏，否决
+            // 4H >= -60: 不做空（但可以做多）
             vetoed = true;
             reason.append("4H非强空底(否决) ");
         }

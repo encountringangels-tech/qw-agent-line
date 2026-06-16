@@ -15,6 +15,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -53,6 +54,28 @@ public class KlineStore {
         }
     }
 
+    /**
+     * 迁移旧版 trade_signal 表（INTEGER id → TEXT id）。
+     * SQLite 不支持 ALTER COLUMN，检测到旧 schema 直接删除重建。
+     */
+    private void migrateTradeSignalTable() {
+        try {
+            List<Map<String, Object>> columns = jdbc.queryForList("PRAGMA table_info(trade_signal)");
+            for (Map<String, Object> col : columns) {
+                if ("id".equals(col.get("name"))) {
+                    String type = (String) col.get("type");
+                    if (type != null && type.toUpperCase().contains("INT")) {
+                        log.warn("检测到旧版 trade_signal 表 (id=INTEGER)，删除重建...");
+                        jdbc.execute("DROP TABLE IF EXISTS trade_signal");
+                    }
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            // 表不存在，无需迁移
+        }
+    }
+
     // ==================== 初始化建表 ====================
 
     private void initTables() {
@@ -82,17 +105,21 @@ public class KlineStore {
             )
         """);
 
+        // 迁移旧版 trade_signal 表（INTEGER id → TEXT id）
+        migrateTradeSignalTable();
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS trade_signal (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        TEXT    PRIMARY KEY,
                 symbol    TEXT    NOT NULL,
                 time      INTEGER NOT NULL,
                 direction TEXT    NOT NULL,
                 price     REAL    NOT NULL,
                 amount    REAL    NOT NULL,
                 score     INTEGER NOT NULL DEFAULT 0,
+                leverage  INTEGER NOT NULL DEFAULT 1,
+                balance   REAL    NOT NULL DEFAULT 0,
                 reason    TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         """);
         jdbc.execute("""
@@ -107,15 +134,17 @@ public class KlineStore {
     public void ensureTradeSignalTable() {
         jdbc.execute("""
             CREATE TABLE IF NOT EXISTS trade_signal (
-                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                id        TEXT    PRIMARY KEY,
                 symbol    TEXT    NOT NULL,
                 time      INTEGER NOT NULL,
                 direction TEXT    NOT NULL,
                 price     REAL    NOT NULL,
                 amount    REAL    NOT NULL,
                 score     INTEGER NOT NULL DEFAULT 0,
+                leverage  INTEGER NOT NULL DEFAULT 1,
+                balance   REAL    NOT NULL DEFAULT 0,
                 reason    TEXT,
-                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
             )
         """);
         jdbc.execute("""
@@ -312,25 +341,50 @@ public class KlineStore {
     /** 批量写入买卖信号（幂等：同symbol+time+direction跳过） */
     public void saveTradeSignals(String symbol, List<TradeSignalRecord> signals) {
         String sql = """
-            INSERT OR IGNORE INTO trade_signal (symbol, time, direction, price, amount, score, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT OR IGNORE INTO trade_signal (id, symbol, time, direction, price, amount, score, leverage, balance, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
         jdbc.batchUpdate(sql, signals, signals.size(), (ps, s) -> {
-            ps.setString(1, symbol);
-            ps.setLong(2, s.getTime());
-            ps.setString(3, s.getDirection());
-            ps.setDouble(4, s.getPrice().doubleValue());
-            ps.setDouble(5, s.getAmount().doubleValue());
-            ps.setInt(6, s.getScore());
-            ps.setString(7, s.getReason());
+            ps.setString(1, s.getId());
+            ps.setString(2, symbol);
+            ps.setLong(3, s.getTime());
+            ps.setString(4, s.getDirection());
+            ps.setDouble(5, s.getPrice().doubleValue());
+            ps.setDouble(6, s.getAmount().doubleValue());
+            ps.setInt(7, s.getScore());
+            ps.setInt(8, s.getLeverage());
+            ps.setDouble(9, s.getBalance());
+            ps.setString(10, s.getReason());
         });
         log.info("已写入 {} 条交易信号 [{}/{}]", signals.size(), symbol, "15m");
+    }
+
+    /** 写入单条买卖信号 */
+    public void saveTradeSignal(TradeSignalRecord record) {
+        String sql = """
+            INSERT OR IGNORE INTO trade_signal (id, symbol, time, direction, price, amount, score, leverage, balance, reason, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+        jdbc.update(sql,
+                record.getId(),
+                record.getSymbol(),
+                record.getTime(),
+                record.getDirection(),
+                record.getPrice().doubleValue(),
+                record.getAmount().doubleValue(),
+                record.getScore(),
+                record.getLeverage(),
+                record.getBalance(),
+                record.getReason(),
+                record.getCreatedAt());
+        log.info("已写入交易信号: id={} symbol={} direction={} price={}",
+                record.getId(), record.getSymbol(), record.getDirection(), record.getPrice());
     }
 
     /** 读取某个symbol的全部买卖信号（按时间正序） */
     public List<TradeSignalRecord> getTradeSignals(String symbol) {
         String sql = """
-            SELECT id, symbol, time, direction, price, amount, score, reason, created_at
+            SELECT id, symbol, time, direction, price, amount, score, leverage, balance, reason, created_at
             FROM trade_signal
             WHERE symbol = ?
             ORDER BY time ASC
@@ -384,13 +438,15 @@ public class KlineStore {
 
     private TradeSignalRecord mapTradeSignal(ResultSet rs, int rowNum) throws SQLException {
         TradeSignalRecord r = new TradeSignalRecord();
-        r.setId(rs.getLong("id"));
+        r.setId(rs.getString("id"));
         r.setSymbol(rs.getString("symbol"));
         r.setTime(rs.getLong("time"));
         r.setDirection(rs.getString("direction"));
         r.setPrice(BigDecimal.valueOf(rs.getDouble("price")));
         r.setAmount(BigDecimal.valueOf(rs.getDouble("amount")));
         r.setScore(rs.getInt("score"));
+        r.setLeverage(rs.getInt("leverage"));
+        r.setBalance(rs.getDouble("balance"));
         r.setReason(rs.getString("reason"));
         r.setCreatedAt(rs.getString("created_at"));
         return r;

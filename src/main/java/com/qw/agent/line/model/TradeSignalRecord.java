@@ -3,30 +3,30 @@ package com.qw.agent.line.model;
 import java.math.BigDecimal;
 
 /**
- * 15min 买卖点记录 —— 持久化到 trade_signal 表。
+ * 买卖点记录 —— 持久化到 trade_signal 表。
  *
  * <pre>
  * direction 取值:
  *   LONG   — 做多开仓
  *   SHORT  — 做空开仓
- *   CLOSE  — 平仓（止盈/反向信号）
+ *   CLOSE  — 平仓（止盈/止损/反向信号）
  * </pre>
  */
 public class TradeSignalRecord {
 
-    /** 自增主键 */
-    private Long id;
+    /** 主键（13位时间戳字符串） */
+    private String id;
 
     /** 交易对 */
     private String symbol;
 
-    /** 信号时间（Unix秒，对齐15min K线） */
+    /** 信号时间（Unix秒） */
     private long time;
 
     /** 方向：LONG / SHORT / CLOSE */
     private String direction;
 
-    /** 信号时的收盘价 */
+    /** 信号时的价格 */
     private BigDecimal price;
 
     /** 开仓/平仓金额（USDT） */
@@ -35,16 +35,27 @@ public class TradeSignalRecord {
     /** 策略评分 */
     private int score;
 
+    /** 杠杆倍数（开仓时记录） */
+    private int leverage = 1;
+
+    /** 执行时的账号余额（USDT），开仓/平仓时记录 */
+    private double balance;
+
     /** 信号原因 */
     private String reason;
 
     /** 创建时间 */
     private String createdAt;
 
+    /** 生成 13 位时间戳 ID */
+    public static String generateId() {
+        return String.valueOf(System.currentTimeMillis());
+    }
+
     // ===== getter / setter =====
 
-    public Long getId() { return id; }
-    public void setId(Long id) { this.id = id; }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
     public String getSymbol() { return symbol; }
     public void setSymbol(String symbol) { this.symbol = symbol; }
@@ -63,6 +74,12 @@ public class TradeSignalRecord {
 
     public int getScore() { return score; }
     public void setScore(int score) { this.score = score; }
+
+    public int getLeverage() { return leverage; }
+    public void setLeverage(int leverage) { this.leverage = leverage; }
+
+    public double getBalance() { return balance; }
+    public void setBalance(double balance) { this.balance = balance; }
 
     public String getReason() { return reason; }
     public void setReason(String reason) { this.reason = reason; }

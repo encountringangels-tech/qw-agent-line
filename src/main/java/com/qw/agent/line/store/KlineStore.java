@@ -2,6 +2,7 @@ package com.qw.agent.line.store;
 
 import com.qw.agent.line.model.Kline;
 import com.qw.agent.line.model.MACDVPoint;
+import com.qw.agent.line.model.TradeSignalRecord;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -81,7 +82,46 @@ public class KlineStore {
             )
         """);
 
-        log.info("SQLite 表已就绪 (kline, macdv_point)");
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS trade_signal (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol    TEXT    NOT NULL,
+                time      INTEGER NOT NULL,
+                direction TEXT    NOT NULL,
+                price     REAL    NOT NULL,
+                amount    REAL    NOT NULL,
+                score     INTEGER NOT NULL DEFAULT 0,
+                reason    TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """);
+        jdbc.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trade_signal_symbol_time
+            ON trade_signal(symbol, time)
+        """);
+
+        log.info("SQLite 表已就绪 (kline, macdv_point, trade_signal)");
+    }
+
+    /** 确保 trade_signal 表存在（兼容旧DB升级，运行时可调用） */
+    public void ensureTradeSignalTable() {
+        jdbc.execute("""
+            CREATE TABLE IF NOT EXISTS trade_signal (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol    TEXT    NOT NULL,
+                time      INTEGER NOT NULL,
+                direction TEXT    NOT NULL,
+                price     REAL    NOT NULL,
+                amount    REAL    NOT NULL,
+                score     INTEGER NOT NULL DEFAULT 0,
+                reason    TEXT,
+                created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """);
+        jdbc.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trade_signal_symbol_time
+            ON trade_signal(symbol, time)
+        """);
     }
 
     // ==================== K 线操作 ====================
@@ -267,6 +307,53 @@ public class KlineStore {
                 jdbc.queryForObject(sql, Integer.class, symbol, interval, sinceTimeMs), 0);
     }
 
+    // ==================== trade_signal 操作 ====================
+
+    /** 批量写入买卖信号（幂等：同symbol+time+direction跳过） */
+    public void saveTradeSignals(String symbol, List<TradeSignalRecord> signals) {
+        String sql = """
+            INSERT OR IGNORE INTO trade_signal (symbol, time, direction, price, amount, score, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """;
+        jdbc.batchUpdate(sql, signals, signals.size(), (ps, s) -> {
+            ps.setString(1, symbol);
+            ps.setLong(2, s.getTime());
+            ps.setString(3, s.getDirection());
+            ps.setDouble(4, s.getPrice().doubleValue());
+            ps.setDouble(5, s.getAmount().doubleValue());
+            ps.setInt(6, s.getScore());
+            ps.setString(7, s.getReason());
+        });
+        log.info("已写入 {} 条交易信号 [{}/{}]", signals.size(), symbol, "15m");
+    }
+
+    /** 读取某个symbol的全部买卖信号（按时间正序） */
+    public List<TradeSignalRecord> getTradeSignals(String symbol) {
+        String sql = """
+            SELECT id, symbol, time, direction, price, amount, score, reason, created_at
+            FROM trade_signal
+            WHERE symbol = ?
+            ORDER BY time ASC
+        """;
+        return jdbc.query(sql, this::mapTradeSignal, symbol);
+    }
+
+    /** 某个symbol的最大信号时间（秒），无数据返回0 */
+    public long getLatestSignalTime(String symbol) {
+        String sql = "SELECT COALESCE(MAX(time), 0) FROM trade_signal WHERE symbol = ?";
+        return Objects.requireNonNullElse(
+                jdbc.queryForObject(sql, Long.class, symbol), 0L);
+    }
+
+    /** 删除某个symbol的全部信号（重新扫描前清理） */
+    public void deleteTradeSignals(String symbol) {
+        int cnt = Objects.requireNonNullElse(
+                jdbc.queryForObject("SELECT COUNT(*) FROM trade_signal WHERE symbol = ?",
+                        Integer.class, symbol), 0);
+        jdbc.update("DELETE FROM trade_signal WHERE symbol = ?", symbol);
+        log.info("已删除 {} 条交易信号 [{}/{}]", cnt, symbol, "15m");
+    }
+
     // ==================== 行映射 ====================
 
     private Kline mapKline(ResultSet rs, int rowNum) throws SQLException {
@@ -281,16 +368,31 @@ public class KlineStore {
     }
 
     private MACDVPoint mapMACDVPoint(ResultSet rs, int rowNum) throws SQLException {
+        long time = rs.getLong("time");
         double macdV = rs.getDouble("macdV");
+        // wasNull() 反映的是最近一次 getDouble/getLong 的 NULL 状态
+        if (rs.wasNull()) {
+            return new MACDVPoint(time, null, null, null);
+        }
         double signal = rs.getDouble("signal");
         double hist = rs.getDouble("hist");
-        boolean hasMacdV = !rs.wasNull();
+        return new MACDVPoint(time,
+                BigDecimal.valueOf(macdV),
+                BigDecimal.valueOf(signal),
+                BigDecimal.valueOf(hist));
+    }
 
-        return new MACDVPoint(
-                rs.getLong("time"),
-                hasMacdV ? BigDecimal.valueOf(macdV) : null,
-                hasMacdV ? BigDecimal.valueOf(signal) : null,
-                hasMacdV ? BigDecimal.valueOf(hist) : null
-        );
+    private TradeSignalRecord mapTradeSignal(ResultSet rs, int rowNum) throws SQLException {
+        TradeSignalRecord r = new TradeSignalRecord();
+        r.setId(rs.getLong("id"));
+        r.setSymbol(rs.getString("symbol"));
+        r.setTime(rs.getLong("time"));
+        r.setDirection(rs.getString("direction"));
+        r.setPrice(BigDecimal.valueOf(rs.getDouble("price")));
+        r.setAmount(BigDecimal.valueOf(rs.getDouble("amount")));
+        r.setScore(rs.getInt("score"));
+        r.setReason(rs.getString("reason"));
+        r.setCreatedAt(rs.getString("created_at"));
+        return r;
     }
 }

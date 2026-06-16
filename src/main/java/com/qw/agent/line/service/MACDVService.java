@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.indicator.MACDVCalculator;
 import com.qw.agent.line.model.*;
 import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.store.TradeDecision;
 import com.qw.agent.line.strategy.MACDVSignalGenerator;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -64,7 +65,8 @@ public class MACDVService {
                                              long before,
                                              int fastLen, int slowLen, int signalLen, int atrLen,
                                              int dTh, int kTh, boolean trendFilter, int minHoldBars,
-                                             int cooldownBars, double minHistAmp) {
+                                             int cooldownBars, double minHistAmp,
+                                             String signalSource) {
 
         // 1. 获取 K 线
         List<Kline> klines;
@@ -112,26 +114,94 @@ public class MACDVService {
         result.put("macdv", macdvData);
 
         if (before > 0) {
-            // 分页模式：不生成信号
-            result.put("signals", List.of());
-            result.put("latestSignal", Map.of("type", "HOLD", "strength", 0, "reason", "分页数据"));
-        } else {
-            // 完整模式：生成信号
-            List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
-                    trendFilter, minHoldBars, cooldownBars, minHistAmp, klineData);
-            int m = tradeSignals.size();
-            List<Map<String, Object>> signalData = new ArrayList<>(m);
-            for (int i = 0; i < m; i++) {
-                signalData.add(toSignalMap(tradeSignals.get(i)));
+            // 分页模式：有信号源时依然合并信号，无信号源时不生成
+            if (!signalSource.isEmpty()) {
+                mergeStrategySignals(result, symbol, interval, macdvData, signalSource);
+            } else {
+                result.put("signals", List.of());
+                result.put("latestSignal", Map.of("type", "HOLD", "strength", 0, "reason", "分页数据"));
             }
-            result.put("signals", signalData);
+        } else if (!signalSource.isEmpty()) {
+            // 使用指定策略表（如 trade_signal），仅15min标记
+            mergeStrategySignals(result, symbol, interval, macdvData, signalSource);
+        } else {
+            // 默认信号生成器仅用于15min，其他周期不生成信号
+            if (!"15m".equals(interval)) {
+                result.put("signals", List.of());
+                result.put("latestSignal", Map.of("type", "HOLD", "strength", 0,
+                        "reason", "信号仅15min显示"));
+            } else {
+                List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
+                        trendFilter, minHoldBars, cooldownBars, minHistAmp, klineData);
+                int m = tradeSignals.size();
+                List<Map<String, Object>> signalData = new ArrayList<>(m);
+                for (int i = 0; i < m; i++) {
+                    signalData.add(toSignalMap(tradeSignals.get(i)));
+                }
+                result.put("signals", signalData);
 
-            LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
-                    trendFilter, minHoldBars, cooldownBars, minHistAmp);
-            result.put("latestSignal", toLatestSignalMap(latest));
+                LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
+                        trendFilter, minHoldBars, cooldownBars, minHistAmp);
+                result.put("latestSignal", toLatestSignalMap(latest));
+            }
         }
 
         return result;
+    }
+
+    /**
+     * 从策略信号表读取买卖点，仅15min标注到MACDV数据点上。可扩展为其他策略表。
+     */
+    private void mergeStrategySignals(Map<String, Object> result, String symbol,
+                                       String interval,
+                                       List<Map<String, Object>> macdvData,
+                                       String signalSource) {
+        if (!"15m".equals(interval)) {
+            result.put("signals", List.of());
+            result.put("latestSignal", Map.of("type", "HOLD", "strength", 0,
+                    "reason", signalSource + "仅15min显示"));
+            return;
+        }
+        List<TradeSignalRecord> records = klineStore.getTradeSignals(symbol);
+        if (records.isEmpty()) {
+            result.put("signals", List.of());
+            result.put("latestSignal", Map.of("type", "HOLD", "strength", 0,
+                    "reason", "无策略信号"));
+            return;
+        }
+        Map<Long, TradeSignalRecord> signalMap = new java.util.LinkedHashMap<>();
+        for (TradeSignalRecord r : records) signalMap.put(r.getTime(), r);
+
+        // 跟踪持仓方向，CLOSE 时据此判断是 pd(平多) 还是 pk(平空)
+        String pos = "FLAT";
+        List<Map<String, Object>> signalList = new ArrayList<>();
+        for (Map<String, Object> point : macdvData) {
+            long time = ((Number) point.get("time")).longValue();
+            TradeSignalRecord sig = signalMap.get(time);
+            if (sig != null) {
+                String dir = sig.getDirection();
+                String type;
+                if ("LONG".equals(dir))  { type = "d";  pos = "LONG"; }
+                else if ("SHORT".equals(dir)) { type = "k";  pos = "SHORT"; }
+                else { type = "LONG".equals(pos) ? "pd" : "pk"; pos = "FLAT"; }
+
+                Map<String, Object> marker = new LinkedHashMap<>();
+                marker.put("time", time);
+                marker.put("type", type);
+                marker.put("direction", dir);
+                marker.put("price", sig.getPrice().doubleValue());
+                marker.put("amount", sig.getAmount().doubleValue());
+                marker.put("score", sig.getScore());
+                marker.put("reason", sig.getReason());
+                point.put("tradeSignal", marker);
+                signalList.add(marker);
+            }
+        }
+        result.put("signals", signalList);
+        result.put("signalSource", signalSource);
+        result.put("latestSignal", signalList.isEmpty()
+                ? Map.of("type", "HOLD", "strength", 0, "reason", "无信号")
+                : signalList.get(signalList.size() - 1));
     }
 
     // ==================== 定时任务同步 MACDV ====================

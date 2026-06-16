@@ -57,7 +57,6 @@ body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFo
 </select></div>
 <div class="param-group"><label>周期</label>
 <select id="interval-select">
-<option value="1m">1分钟</option>
 <option value="5m">5分钟</option>
 <option value="15m">15分钟</option>
 <option value="30m">30分钟</option>
@@ -164,11 +163,14 @@ function params() {
     };
 }
 
-function baseUrl() {
+function baseUrl(noSignal) {
     const p = params();
-    return '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval
+    let url = '/macdv/data?symbol=' + p.symbol + '&interval=' + p.interval
         + '&fastLen=' + p.fastLen + '&slowLen=' + p.slowLen + '&signalLen=' + p.signalLen + '&atrLen=' + p.atrLen
         + '&dTh=' + p.dTh + '&kTh=' + p.kTh;
+    // 15min 使用策略回测信号表，其他周期不显示信号
+    if (p.interval === '15m' && !noSignal) url += '&signalSource=trade_signal';
+    return url;
 }
 
 // ============================================================
@@ -195,7 +197,7 @@ async function refresh() {
 }
 
 // ============================================================
-//  加载更多历史（左滑触发，追加到前面，不含信号）
+//  加载更多历史（左滑触发，追加到前面，含信号）
 // ============================================================
 async function loadMoreHistory() {
     if (loadingHistory || loadedKlines.length === 0) return;
@@ -206,10 +208,12 @@ async function loadMoreHistory() {
         const data = await (await fetch(url)).json();
         const newKlines = data.klines || [];
         const newMacdv  = data.macdv  || [];
+        const newSignals = data.signals || [];
         if (newKlines.length === 0) { loadingHistory = false; return; }
 
         loadedKlines = newKlines.concat(loadedKlines);
         loadedMacdv  = newMacdv.concat(loadedMacdv);
+        loadedSignals = newSignals.concat(loadedSignals);
         rebuild();
         updateStatus();
     } catch(e) { /* 静默 */ }

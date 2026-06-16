@@ -202,19 +202,31 @@ public class MultiTimeframeStrategy {
             // 新开多头：重置持仓跟踪状态
             resetPositionState(symbol);
         } else if (ss.score >= SCORE_SHORT_THRESHOLD && ss.score > ls.score) {
-            action = "SHORT";
-            confidence = normalizeScore(ss.score);
-            reason.append(ss.reason);
-            // 3x: 4H强空(<-60) + 1H配合(<0) — 回测最大亏损仅2.21%
-            if (h4StrongBearish && h1NotConflictShort) {
-                leverage = 3;
-                reason.append(" ★3x杠杆");
+            // [优化] 1H极端超卖<-150：禁止做空（反弹概率55.6% > 继续下跌44.4%）
+            if (h1Mv < -150) {
+                action = "HOLD";
+                confidence = 0.25;
+                reason.append(" 1H<-150极端超卖禁止做空");
             } else {
-                leverage = 2;
-                reason.append(" ★2x杠杆");
+                action = "SHORT";
+                confidence = normalizeScore(ss.score);
+                reason.append(ss.reason);
+                // 3x: 4H强空(<-60) + 1H配合(<0) — 回测最大亏损仅2.21%
+                if (h4StrongBearish && h1NotConflictShort) {
+                    leverage = 3;
+                    reason.append(" ★3x杠杆");
+                } else {
+                    leverage = 2;
+                    reason.append(" ★2x杠杆");
+                }
+                // [优化] 1H超卖<-100：做空降杠杆到2x，减少极端区放大亏损
+                if (h1Mv < -100) {
+                    leverage = Math.min(leverage, 2);
+                    reason.append(" [1H<-100降2x]");
+                }
+                // 新开空头：重置持仓跟踪状态
+                resetPositionState(symbol);
             }
-            // 新开空头：重置持仓跟踪状态
-            resetPositionState(symbol);
         } else {
             action = "HOLD";
             double maxScore = Math.max(ls.score, ss.score);

@@ -7,6 +7,8 @@ import com.qw.agent.line.model.Kline;
 import com.qw.agent.line.model.MACDVPoint;
 import com.qw.agent.line.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.store.MultiTimeframeStrategy;
+import com.qw.agent.line.store.TradeDecision;
 import com.qw.agent.line.strategy.MACDVSignalGenerator;
 import org.sqlite.SQLiteDataSource;
 
@@ -42,7 +44,8 @@ public class Test {
         // syncLatest();
 //         fetchHistory("BTCUSDT", 700);
         // 第二个参数 daysBack: 365=一年, 30=一个月, 7=一周, 0=全量
-        generateAIAnalysisFile("BTCUSDT", 90);
+        generateAIAnalysisFile("BTCUSDT", 300);
+//        demoStrategy();
     }
 
     // =========================================================================
@@ -427,5 +430,98 @@ public class Test {
 
     private static MACDVService createService(KlineStore store) {
         return new MACDVService(new MACDVCalculator(), new MACDVSignalGenerator(), store);
+    }
+
+    // =========================================================================
+    //   方法五：演示 MultiTimeframeStrategy 用法
+    // =========================================================================
+
+    /**
+     * 演示如何使用 {@link MultiTimeframeStrategy} 获取买卖决策。
+     *
+     * <h3>使用步骤</h3>
+     * <ol>
+     *   <li>创建 {@link KlineStore}（已有数据）</li>
+     *   <li>创建 {@link MultiTimeframeStrategy}</li>
+     *   <li>调用 {@code decide("BTCUSDT")} 获取买卖方向 + 杠杆</li>
+     *   <li>持仓后调用 {@code shouldCloseLong/Short} 判断是否平仓</li>
+     * </ol>
+     *
+     * <h3>TradeDecision.action 取值含义</h3>
+     * <pre>
+     *   LONG   → 做多（开多仓）
+     *   SHORT  → 做空（开空仓）
+     *   HOLD   → 观望，不操作
+     * </pre>
+     */
+    public static void demoStrategy() {
+        // 1. 创建 KlineStore（直接从 SQLite 读取 K 线 + MACD-V 数据）
+        KlineStore store = createStore();
+
+        // 2. 创建多周期策略（注入 KlineStore）
+        MultiTimeframeStrategy strategy = new MultiTimeframeStrategy(store);
+
+        String symbol = "BTCUSDT";
+
+        // 3. 获取当前买卖决策
+        TradeDecision decision = strategy.decide(symbol);
+
+        System.out.println("===== MultiTimeframeStrategy 决策演示 =====");
+        System.out.println("交易对: " + symbol);
+        System.out.println("操作方向: " + decision.getAction());
+        System.out.println("建议杠杆: " + decision.getLeverage() + "x");
+        System.out.println("置信度:   " + String.format("%.0f%%", decision.getConfidence() * 100));
+        System.out.println("决策原因: " + decision.getReason());
+        System.out.println("最新价格: $" + decision.getLastPrice());
+        System.out.println();
+        System.out.println("---- 各周期 MACDV ----");
+        System.out.printf("  日线:  %8.2f  (更新时间 %s)%n",
+                decision.getDailyMacdv(), formatTs(decision.getDailyTime()));
+        System.out.printf("  4H:    %8.2f  (更新时间 %s)%n",
+                decision.getFourHourMacdv(), formatTs(decision.getFourHourTime()));
+        System.out.printf("  1H:    %8.2f  (更新时间 %s)%n",
+                decision.getOneHourMacdv(), formatTs(decision.getOneHourTime()));
+        System.out.printf("  15min: %8.2f  (更新时间 %s)%n",
+                decision.getFifteenMinMacdv(), formatTs(decision.getFifteenMinTime()));
+        System.out.printf("  5min:  %8.2f  (更新时间 %s)%n",
+                decision.getFiveMinMacdv(), formatTs(decision.getFiveMinTime()));
+        System.out.println();
+
+        // 4. 根据决策结果，模拟下一步操作
+        String action = decision.getAction();
+        int leverage = decision.getLeverage();
+
+        switch (action) {
+            case "LONG" -> System.out.printf(
+                    ">>> 建议操作: 以 %dx 杠杆开多仓，价格约 $%.2f%n",
+                    leverage, decision.getLastPrice());
+            case "SHORT" -> System.out.printf(
+                    ">>> 建议操作: 以 %dx 杠杆开空仓，价格约 $%.2f%n",
+                    leverage, decision.getLastPrice());
+            default -> System.out.println(">>> 建议操作: 观望等待");
+        }
+
+        // 5. 演示平仓判断（假设已持有多仓）
+        System.out.println();
+        System.out.println("---- 平仓条件检查（假设当前持有多仓）----");
+        boolean shouldCloseLong = strategy.shouldCloseLong(symbol);
+        System.out.println("shouldCloseLong: " + shouldCloseLong
+                + (shouldCloseLong ? " → 建议平多" : " → 继续持有"));
+
+        System.out.println("---- 平仓条件检查（假设当前持有空仓）----");
+        boolean shouldCloseShort = strategy.shouldCloseShort(symbol);
+        System.out.println("shouldCloseShort: " + shouldCloseShort
+                + (shouldCloseShort ? " → 建议平空" : " → 继续持有"));
+
+        System.out.println();
+        System.out.println("===== 演示完成 =====");
+    }
+
+    private static String formatTs(long epochSec) {
+        if (epochSec == 0) return "N/A";
+        return java.time.format.DateTimeFormatter
+                .ofPattern("yyyy-MM-dd HH:mm:ss")
+                .withZone(java.time.ZoneId.of("Asia/Shanghai"))
+                .format(java.time.Instant.ofEpochSecond(epochSec));
     }
 }

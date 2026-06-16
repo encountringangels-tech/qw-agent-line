@@ -91,7 +91,7 @@ public class MACDVController {
                 symbol, interval, limit, 0,
                 fastLen, slowLen, signalLen, atrLen,
                 dTh, kTh, trendFilter, minHoldBars,
-                cooldownBars, minHistAmp);
+                cooldownBars, minHistAmp, "");
         long elapsed = System.currentTimeMillis() - start;
 
         // 打印统计
@@ -131,17 +131,21 @@ public class MACDVController {
     /**
      * 获取 MACD-V 图表所需的全部数据。
      *
-     * @param symbol     交易对（默认 BTCUSDT）
-     * @param interval   K 线周期（默认 1h）
-     * @param limit      返回 K 线条数（默认 1000）
-     * @param fastLen    快线 EMA 周期（默认 12）
-     * @param slowLen    慢线 EMA 周期（默认 26）
-     * @param signalLen  信号线 EMA 周期（默认 9）
-     * @param atrLen     ATR 周期（默认 26）
-     * @param dTh        开多阈值（默认 -100）
-     * @param kTh        开空阈值（默认 100）
+     * @param symbol      交易对（默认 BTCUSDT）
+     * @param interval    K 线周期（默认 1h）
+     * @param limit       返回 K 线条数（默认 500）
+     * @param before      Unix 秒级时间戳，>0 表示加载此时间之前的 K 线（分页模式，不含信号）
+     * @param fastLen     快线 EMA 周期（默认 12）
+     * @param slowLen     慢线 EMA 周期（默认 26）
+     * @param signalLen   信号线 EMA 周期（默认 9）
+     * @param atrLen      ATR 周期（默认 26）
+     * @param dTh         开多阈值（默认 -100）
+     * @param kTh         开空阈值（默认 100）
      * @param trendFilter 趋势过滤（默认 true，MACDV>0只做多,<0只做空）
      * @param minHoldBars 最小持仓K线数（默认 3）
+     * @param cooldownBars 平仓后冷却K线数（默认 3）
+     * @param minHistAmp  Hist V形态最小振幅（默认 0.03）
+     * @param signalSource 策略信号源表名（默认空字符串，使用默认信号生成器）
      * @return 包含 klines / macdv / signals / latestSignal 的 JSON
      */
     /**
@@ -168,13 +172,14 @@ public class MACDVController {
             @RequestParam(defaultValue = "true") boolean trendFilter,
             @RequestParam(defaultValue = "3") int minHoldBars,
             @RequestParam(defaultValue = "3") int cooldownBars,
-            @RequestParam(defaultValue = "0.03") double minHistAmp) {
+            @RequestParam(defaultValue = "0.03") double minHistAmp,
+            @RequestParam(defaultValue = "") String signalSource) {
 
         Map<String, Object> data = macdvService.getChartData(
                 symbol, interval, limit, before,
                 fastLen, slowLen, signalLen, atrLen,
                 dTh, kTh, trendFilter, minHoldBars,
-                cooldownBars, minHistAmp);
+                cooldownBars, minHistAmp, signalSource);
 
         return ResponseEntity.ok(data);
     }

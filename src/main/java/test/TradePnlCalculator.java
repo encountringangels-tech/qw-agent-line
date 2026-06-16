@@ -63,7 +63,7 @@ public class TradePnlCalculator {
         double maxCapital = capital;
         double minCapital = capital;
 
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm");
+        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         sdf.setTimeZone(TimeZone.getTimeZone("Asia/Shanghai"));
 
         for (TradeSignalRecord sig : signals) {

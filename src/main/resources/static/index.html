@@ -101,6 +101,27 @@ body{background:#131722;color:#d1d4dc;font-family:-apple-system,BlinkMacSystemFo
 const $ = id => document.getElementById(id);
 
 // ============================================================
+//  东八时区时间格式化（用于图表时间轴 & 鼠标悬停提示）
+// ============================================================
+function cstTickMarkFormatter(time) {
+    const d = new Date(time * 1000);
+    return d.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false,
+    });
+}
+function cstCrosshairTimeFormatter(time) {
+    const d = new Date(time * 1000);
+    const dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Shanghai' });
+    const timeStr = d.toLocaleTimeString('en-GB', { timeZone: 'Asia/Shanghai', hour12: false });
+    return dateStr + ' ' + timeStr;
+}
+
+// ============================================================
 //  图表
 // ============================================================
 let chart1, chart2;
@@ -118,19 +139,22 @@ function init() {
         layout: {background:{color:'#1e222d'},textColor:'#d1d4dc'},
         grid: {vertLines:{color:'#2a2e39'},horzLines:{color:'#2a2e39'}},
         rightPriceScale: {borderColor:'#3a3e4a'},
-        timeScale: {borderVisible:false,timeVisible:false},
+        timeScale: {borderVisible:false,timeVisible:true,tickMarkFormatter:cstTickMarkFormatter},
         handleScroll: {vertTouchDrag:false},
+        localization: {timeFormatter:cstCrosshairTimeFormatter},
     });
     serCandle = chart1.addCandlestickSeries({
         upColor:'#089981',downColor:'#f23645',borderDownColor:'#f23645',borderUpColor:'#089981',
         wickDownColor:'#f23645',wickUpColor:'#089981',
+        wickVisible:true,borderVisible:true,
     });
     chart2 = LightweightCharts.createChart($('macdv-chart'), {
         layout: {background:{color:'#1e222d'},textColor:'#d1d4dc'},
         grid: {vertLines:{color:'#2a2e39'},horzLines:{color:'#2a2e39'}},
         rightPriceScale: {borderColor:'#3a3e4a',scaleMargins:{top:0.15,bottom:0.15}},
-        timeScale: {borderColor:'#3a3e4a',timeVisible:true,secondsVisible:false},
+        timeScale: {borderColor:'#3a3e4a',timeVisible:true,secondsVisible:false,tickMarkFormatter:cstTickMarkFormatter},
         handleScroll: {vertTouchDrag:false},
+        localization: {timeFormatter:cstCrosshairTimeFormatter},
     });
     serHist = chart2.addHistogramSeries({priceFormat:{type:'price',precision:2,minMove:0.01},priceLineVisible:false,lastValueVisible:false});
     serLine = chart2.addLineSeries({color:'#2962FF',lineWidth:2,priceLineVisible:false,lastValueVisible:true});

@@ -188,22 +188,34 @@ public class MultiTimeframeStrategy {
         boolean h1NotConflictShort = (h1Mv < 0);
 
         if (ls.score >= SCORE_LONG_THRESHOLD && ls.score >= ss.score) {
-            action = "LONG";
-            confidence = normalizeScore(ls.score);
-            reason.append(ls.reason);
-            // 3x: 4H强势(>50) + 1H不冲突(>0) — 回测最大亏损仅1.96%
-            if (h4StrongBullish && h1NotConflictLong) {
-                leverage = 3;
-                reason.append(" ★3x杠杆");
+            // [优化] Score 10 过滤：回测胜率仅50%且拉高回撤，跳过以降低风险
+            if (ls.score == 10) {
+                action = "HOLD";
+                confidence = 0.30;
+                reason.append(ls.reason).append(" [Score10过滤]");
             } else {
-                leverage = 2;
-                reason.append(" ★2x杠杆");
+                action = "LONG";
+                confidence = normalizeScore(ls.score);
+                reason.append(ls.reason);
+                // 3x: 4H强势(>50) + 1H不冲突(>0) — 回测最大亏损仅1.96%
+                if (h4StrongBullish && h1NotConflictLong) {
+                    leverage = 3;
+                    reason.append(" ★3x杠杆");
+                } else {
+                    leverage = 2;
+                    reason.append(" ★2x杠杆");
+                }
+                // 新开多头：重置持仓跟踪状态
+                resetPositionState(symbol);
             }
-            // 新开多头：重置持仓跟踪状态
-            resetPositionState(symbol);
         } else if (ss.score >= SCORE_SHORT_THRESHOLD && ss.score > ls.score) {
-            // [优化] 1H极端超卖<-150：禁止做空（反弹概率55.6% > 继续下跌44.4%）
-            if (h1Mv < -150) {
+            // [优化] Score 10 过滤：回测胜率仅50%且拉高回撤，跳过以降低风险
+            if (ss.score == 10) {
+                action = "HOLD";
+                confidence = 0.30;
+                reason.append(ss.reason).append(" [Score10过滤]");
+            } else if (h1Mv < -150) {
+                // [优化] 1H极端超卖<-150：禁止做空（反弹概率55.6% > 继续下跌44.4%）
                 action = "HOLD";
                 confidence = 0.25;
                 reason.append(" 1H<-150极端超卖禁止做空");

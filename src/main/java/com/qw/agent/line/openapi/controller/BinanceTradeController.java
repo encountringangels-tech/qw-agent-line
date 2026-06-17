@@ -255,6 +255,19 @@ public class BinanceTradeController {
         try {
             Map<String, Object> m = mapper.readValue(json,
                     new TypeReference<Map<String, Object>>() {});
+            // 币安合约市价单返回 cumQty（单位=基础币种）而不返回 cumQuote/avgPrice，
+            // 所以 avgPrice 从 cumQty 计算：cumQty / executedQty（仅当二者不同时才有意义）
+            BigDecimal executedQty = toBigDec(m.get("executedQty"));
+            BigDecimal cumQty = toBigDec(m.get("cumQty"));
+            BigDecimal avgPrice;
+            if (executedQty != null && executedQty.compareTo(BigDecimal.ZERO) > 0
+                    && cumQty != null && cumQty.compareTo(executedQty) != 0
+                    && cumQty.compareTo(BigDecimal.ZERO) > 0) {
+                // cumQty = quote 累计成交额时，才能算出均价
+                avgPrice = cumQty.divide(executedQty, 2, java.math.RoundingMode.HALF_UP);
+            } else {
+                avgPrice = toBigDec(m.get("avgPrice"));  // 可能 null
+            }
             return BinanceOrderResp.builder()
                     .orderId(str(m.get("orderId")))
                     .clientOrderId(str(m.get("clientOrderId")))
@@ -264,10 +277,10 @@ public class BinanceTradeController {
                     .positionSide(str(m.get("positionSide")))
                     .status(str(m.get("status")))
                     .origQuantity(toBigDec(m.get("origQty")))
-                    .executedQuantity(toBigDec(m.get("executedQty")))
-                    .cumQuote(toBigDec(m.get("cumQuote")))
+                    .executedQuantity(executedQty)
+                    .cumQuote(cumQty)
                     .price(toBigDec(m.get("price")))
-                    .avgPrice(toBigDec(m.get("avgPrice")))
+                    .avgPrice(avgPrice)
                     .filled("FILLED".equals(str(m.get("status"))))
                     .failureReason(str(m.get("failureReason")))
                     .rawJson(json)
@@ -294,6 +307,16 @@ public class BinanceTradeController {
     }
 
     private BinanceOrderResp toOrderResp(Map<String, Object> m) {
+        BigDecimal executedQty = toBigDec(m.get("executedQty"));
+        BigDecimal cumQty = toBigDec(m.get("cumQty"));
+        BigDecimal avgPrice;
+        if (executedQty != null && executedQty.compareTo(BigDecimal.ZERO) > 0
+                && cumQty != null && cumQty.compareTo(executedQty) != 0
+                && cumQty.compareTo(BigDecimal.ZERO) > 0) {
+            avgPrice = cumQty.divide(executedQty, 2, java.math.RoundingMode.HALF_UP);
+        } else {
+            avgPrice = toBigDec(m.get("avgPrice"));
+        }
         return BinanceOrderResp.builder()
                 .orderId(str(m.get("orderId")))
                 .clientOrderId(str(m.get("clientOrderId")))
@@ -303,10 +326,10 @@ public class BinanceTradeController {
                 .positionSide(str(m.get("positionSide")))
                 .status(str(m.get("status")))
                 .origQuantity(toBigDec(m.get("origQty")))
-                .executedQuantity(toBigDec(m.get("executedQty")))
-                .cumQuote(toBigDec(m.get("cumQuote")))
+                .executedQuantity(executedQty)
+                .cumQuote(cumQty)
                 .price(toBigDec(m.get("price")))
-                .avgPrice(toBigDec(m.get("avgPrice")))
+                .avgPrice(avgPrice)
                 .filled("FILLED".equals(str(m.get("status"))))
                 .build();
     }

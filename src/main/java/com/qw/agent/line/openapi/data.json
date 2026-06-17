@@ -1,0 +1,76 @@
+接口：http://localhost:8089/api/binance/market-buy
+返回：
+{
+"orderId": "15329541928",
+"clientOrderId": "lsqxRe7ONEkWBkZ5O99xU3",
+"symbol": "BTCUSDT",
+"side": "BUY",
+"type": "MARKET",
+"positionSide": "BOTH",
+"status": "FILLED",
+"origQuantity": 0.1530,
+"executedQuantity": 0.1530,
+"cumQuote": null,
+"price": 0.00,
+"avgPrice": null,
+"filled": true,
+"failureReason": null,
+"rawJson": "{\"orderId\":15329541928,\"symbol\":\"BTCUSDT\",\"status\":\"FILLED\",\"clientOrderId\":\"lsqxRe7ONEkWBkZ5O99xU3\",\"price\":\"0.00\",\"origQty\":\"0.1530\",\"executedQty\":\"0.1530\",\"cumQty\":\"0.1530\",\"timeInForce\":\"GTC\",\"type\":\"MARKET\",\"reduceOnly\":false,\"closePosition\":false,\"side\":\"BUY\",\"positionSide\":\"BOTH\",\"stopPrice\":\"0.00\",\"workingType\":\"CONTRACT_PRICE\",\"priceProtect\":false,\"origType\":\"MARKET\",\"priceMatch\":\"NONE\",\"selfTradePreventionMode\":\"EXPIRE_MAKER\",\"goodTillDate\":0,\"updateTime\":1781689518948}"
+}
+接口：http://localhost:8089/api/binance/close-long
+返回：
+{
+"orderId": "15328762307",
+"clientOrderId": "yoreF0cvETHj5Nt5iekba2",
+"symbol": "BTCUSDT",
+"side": "SELL",
+"type": "MARKET",
+"positionSide": "BOTH",
+"status": "FILLED",
+"origQuantity": 0.0150,
+"executedQuantity": 0.0150,
+"cumQuote": null,
+"price": 0.00,
+"avgPrice": null,
+"filled": true,
+"failureReason": null,
+"rawJson": "{\"orderId\":15328762307,\"symbol\":\"BTCUSDT\",\"status\":\"FILLED\",\"clientOrderId\":\"yoreF0cvETHj5Nt5iekba2\",\"price\":\"0.00\",\"origQty\":\"0.0150\",\"executedQty\":\"0.0150\",\"cumQty\":\"0.0150\",\"timeInForce\":\"GTC\",\"type\":\"MARKET\",\"reduceOnly\":true,\"closePosition\":false,\"side\":\"SELL\",\"positionSide\":\"BOTH\",\"stopPrice\":\"0.00\",\"workingType\":\"CONTRACT_PRICE\",\"priceProtect\":false,\"origType\":\"MARKET\",\"priceMatch\":\"NONE\",\"selfTradePreventionMode\":\"EXPIRE_MAKER\",\"goodTillDate\":0,\"updateTime\":1781688236272}"
+}
+接口：http://localhost:8089/api/binance/market-sell
+返回：
+{
+"orderId": "15328867401",
+"clientOrderId": "6ZtXgcMOCahUuyaTLAVFjS",
+"symbol": "BTCUSDT",
+"side": "SELL",
+"type": "MARKET",
+"positionSide": "BOTH",
+"status": "FILLED",
+"origQuantity": 0.0150,
+"executedQuantity": 0.0150,
+"cumQuote": null,
+"price": 0.00,
+"avgPrice": null,
+"filled": true,
+"failureReason": null,
+"rawJson": "{\"orderId\":15328867401,\"symbol\":\"BTCUSDT\",\"status\":\"FILLED\",\"clientOrderId\":\"6ZtXgcMOCahUuyaTLAVFjS\",\"price\":\"0.00\",\"origQty\":\"0.0150\",\"executedQty\":\"0.0150\",\"cumQty\":\"0.0150\",\"timeInForce\":\"GTC\",\"type\":\"MARKET\",\"reduceOnly\":false,\"closePosition\":false,\"side\":\"SELL\",\"positionSide\":\"BOTH\",\"stopPrice\":\"0.00\",\"workingType\":\"CONTRACT_PRICE\",\"priceProtect\":false,\"origType\":\"MARKET\",\"priceMatch\":\"NONE\",\"selfTradePreventionMode\":\"EXPIRE_MAKER\",\"goodTillDate\":0,\"updateTime\":1781688403187}"
+}
+接口：http://localhost:8089/api/binance/close-short
+返回：
+{
+"orderId": "15328937032",
+"clientOrderId": "4fJAO4CenGz6DeeqyqZb1Q",
+"symbol": "BTCUSDT",
+"side": "BUY",
+"type": "MARKET",
+"positionSide": "BOTH",
+"status": "FILLED",
+"origQuantity": 0.0150,
+"executedQuantity": 0.0150,
+"cumQuote": null,
+"price": 0.00,
+"avgPrice": null,
+"filled": true,
+"failureReason": null,
+"rawJson": "{\"orderId\":15328937032,\"symbol\":\"BTCUSDT\",\"status\":\"FILLED\",\"clientOrderId\":\"4fJAO4CenGz6DeeqyqZb1Q\",\"price\":\"0.00\",\"origQty\":\"0.0150\",\"executedQty\":\"0.0150\",\"cumQty\":\"0.0150\",\"timeInForce\":\"GTC\",\"type\":\"MARKET\",\"reduceOnly\":true,\"closePosition\":false,\"side\":\"BUY\",\"positionSide\":\"BOTH\",\"stopPrice\":\"0.00\",\"workingType\":\"CONTRACT_PRICE\",\"priceProtect\":false,\"origType\":\"MARKET\",\"priceMatch\":\"NONE\",\"selfTradePreventionMode\":\"EXPIRE_MAKER\",\"goodTillDate\":0,\"updateTime\":1781688538139}"
+}

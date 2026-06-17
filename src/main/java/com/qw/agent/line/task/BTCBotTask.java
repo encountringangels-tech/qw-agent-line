@@ -2,6 +2,7 @@ package com.qw.agent.line.task;
 
 import com.qw.agent.line.model.Kline;
 import com.qw.agent.line.model.MACDVPoint;
+import com.qw.agent.line.model.TradeSignalRecord;
 import com.qw.agent.line.order.OrderService;
 import com.qw.agent.line.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
@@ -13,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 /**
@@ -25,38 +27,18 @@ import java.util.List;
  *   <li><b>策略交易</b> — 基于最新数据做多/做空/平仓</li>
  * </ol>
  *
- * <p>三步合一的目的是保证 {@code strategy.decide()} 使用的 MACDV 数据是最新的，
- * 避免因外部定时任务同步滞后导致基于过期数据交易。</p>
- *
- * <p>仅支持单笔持仓，使用静态变量缓存余额和持仓状态。</p>
+ * <p>余额和持仓状态实时从币安查询，不使用本地缓存变量。</p>
  */
 @Component
 public class BTCBotTask {
 
     private static final Logger log = LoggerFactory.getLogger(BTCBotTask.class);
 
-    // ==================== 缓存变量 ====================
-
-    /** 初始余额（USDT） */
-    private static final double INITIAL_BALANCE = 1000.0;
-
-    /** 当前可用余额，启动时加载 */
-    private static double balance = 0;
-
-    /** 当前持仓方向，null 空仓，LONG/SHORT 互斥 */
-    private static String position = null;
-
-    /** 开仓价格 */
-    private static double entryPrice = 0;
-
-    /** 开仓金额 = 余额 × 杠杆 */
-    private static double positionAmount = 0;
-
-    /** 开仓杠杆倍数 */
-    private static int currentLeverage = 1;
-
     /** 策略交易需要同步的周期（与 MultiTimeframeStrategy 一致） */
-    private static final String[] TRADE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"};
+    private static final String[] TRADE_INTERVALS = {"5m", "15m", "1h", "4h", "1d"};
+
+    /** 默认开仓金额（USDT），当余额查询失败时使用 */
+    private static final double DEFAULT_ORDER_USDT = 100.0;
 
     // ==================== 依赖 ====================
 
@@ -75,11 +57,18 @@ public class BTCBotTask {
 
     @PostConstruct
     public void init() {
-        balance = INITIAL_BALANCE;
+        String symbol = "BTCUSDT";
+        // 启动时从币安查询当前持仓状态，恢复上下文
+        String direction = orderService.getPositionDirection(symbol);
+        BigDecimal entryPrice = orderService.getEntryPrice(symbol);
+        BigDecimal balance = orderService.getAvailableBalance();
+
         log.info("┌─────────────────────────────────────────────");
         log.info("│ BTC 交易机器人初始化完成");
-        log.info("│   初始余额: {} USDT", formatBalance(balance));
-        log.info("│   当前持仓: {}", position != null ? position : "空仓");
+        log.info("│   账户余额: {} USDT", formatBalance(balance.doubleValue()));
+        log.info("│   当前持仓: {} (入场价={})",
+                direction != null ? direction : "空仓",
+                direction != null ? formatPrice(entryPrice.doubleValue()) : "-");
         log.info("│   执行周期: 每15分钟 (:00/15/30/45)");
         log.info("│   数据同步: K线 → MACDV → 交易（三步合一）");
         log.info("└─────────────────────────────────────────────");
@@ -97,26 +86,27 @@ public class BTCBotTask {
      *   15:00:03     [1/3] 拉取刚收盘的 K 线并保存
      *   15:00:04     [2/3] 计算该 K 线的 MACDV
      *   15:00:05     [3/3] strategy.decide() 基于最新 MACDV 做出判断
-     *                 → 若有信号（LONG/SHORT），handleOpen* 立即执行
+     *                 → 若有信号（LONG/SHORT），立即执行开仓
      *                 → 不等待下一根 K 线
      * </pre>
-     *
-     * <p>三步合一的目的是保证 decide() 使用的 MACDV 数据是最新的，
-     * 避免因外部定时任务同步滞后导致基于过期数据交易。</p>
      */
     @Scheduled(cron = "2 0,15,30,45 * * * ?")
     public void execute() {
         String symbol = "BTCUSDT";
         long tick = System.currentTimeMillis();
 
+        // 实时从币安查询当前状态
+        String currentPosition = orderService.getPositionDirection(symbol);
+        BigDecimal currentBalance = orderService.getAvailableBalance();
+        BigDecimal currentEntryPrice = orderService.getEntryPrice(symbol);
+
         log.info("");
         log.info("═════════ BTC 自动交易 [{}] ═════════", symbol);
         log.info("  触发时刻 → {} (Unix ms)", tick);
-        log.info("  当前状态 → 余额={}  持仓={}  开仓价={}  杠杆={}x",
-                formatBalance(balance),
-                position != null ? position : "空仓",
-                position != null ? formatPrice(entryPrice) : "-",
-                position != null ? currentLeverage : "-");
+        log.info("  当前状态 → 余额={}  持仓={}  开仓价={}",
+                formatBalance(currentBalance.doubleValue()),
+                currentPosition != null ? currentPosition : "空仓",
+                currentPosition != null ? formatPrice(currentEntryPrice.doubleValue()) : "-");
 
         try {
             // ======== 第一步：同步最新 K 线 ========
@@ -141,7 +131,6 @@ public class BTCBotTask {
             log.info("  ─── [2/3] 计算MACDV指标 ───");
             for (String interval : TRADE_INTERVALS) {
                 macdvService.syncMACDV(symbol, interval);
-                // 读取刚写入的最新 MACDV 时间，确认已更新
                 MACDVPoint latest = klineStore.getLatestMACDVPoint(symbol, interval);
                 if (latest != null) {
                     log.info("    [{}/{}] 最新MACDV time={}", symbol, interval, latest.getTime());
@@ -161,17 +150,17 @@ public class BTCBotTask {
                     action, formatPrice(price), score, leverage);
             log.info("  决策理由 → {}", reason);
 
-            // 安全检查：有持仓时只能走 HOLD
-            if (position != null && !"HOLD".equals(action)) {
-                log.warn("  ⚠ 已有持仓 {} 但策略返回 {}，降级为 HOLD", position, action);
-                handleCloseIfNeeded(symbol, price, reason);
+            // 如果币安有持仓，则策略动作降级为 HOLD（只走平仓检查）
+            if (currentPosition != null && !"HOLD".equals(action)) {
+                log.warn("  ⚠ 币安已有持仓 {} 但策略返回 {}，降级为 HOLD", currentPosition, action);
+                handleCloseIfNeeded(symbol, currentPosition);
                 return;
             }
 
             switch (action) {
-                case "LONG" -> handleOpenLong(symbol, price, score, leverage, reason);
-                case "SHORT" -> handleOpenShort(symbol, price, score, leverage, reason);
-                case "HOLD" -> handleCloseIfNeeded(symbol, price, reason);
+                case "LONG" -> handleOpenLong(symbol, leverage, reason);
+                case "SHORT" -> handleOpenShort(symbol, leverage, reason);
+                case "HOLD" -> handleCloseIfNeeded(symbol, currentPosition);
                 default -> log.warn("  未知操作类型: {}", action);
             }
 
@@ -179,78 +168,66 @@ public class BTCBotTask {
             log.error("  ❌ BTC 自动交易异常", e);
         }
 
+        BigDecimal finalBalance = orderService.getAvailableBalance();
+        String finalPosition = orderService.getPositionDirection(symbol);
         log.info("  最终状态 → 余额={}  持仓={}",
-                formatBalance(balance), position != null ? position : "空仓");
+                formatBalance(finalBalance.doubleValue()),
+                finalPosition != null ? finalPosition : "空仓");
         log.info("═════════ 自动交易结束 ═════════");
     }
 
     // ==================== 开仓逻辑 ====================
 
-    private void handleOpenLong(String symbol, double price, int score, int leverage, String reason) {
+    private void handleOpenLong(String symbol, int leverage, String reason) {
         log.info("  ─── 开仓决策: 做多 ───");
-        if (position != null) {
-            log.info("  ⏭ 已有持仓 {}，忽略", position);
+
+        // 再次确认无持仓
+        if (orderService.hasPosition(symbol)) {
+            log.info("  ⏭ 币安已有持仓，忽略做多信号");
             return;
         }
-        positionAmount = balance * leverage;
-        currentLeverage = leverage;
 
-        log.info("  ✅ 执行做多开仓");
-        log.info("     开仓价格   = {}", formatPrice(price));
-        log.info("     开仓前余额 = {} USDT", formatBalance(balance));
-        log.info("     杠杆       = {}x", leverage);
-        log.info("     开仓金额   = {} (余额{}×杠杆{}x)", formatBalance(positionAmount), formatBalance(balance), leverage);
-
-        orderService.executeOrder(symbol, "LONG", price, positionAmount,
-                score, leverage, balance, reason);
-
-        position = "LONG";
-        entryPrice = price;
-        strategy.resetPositionState(symbol);
-        log.info("  ✔ 做多开仓完成");
+        TradeSignalRecord record = orderService.openLong(symbol, leverage, reason);
+        if (record != null) {
+            strategy.resetPositionState(symbol);
+            log.info("  ✔ 做多开仓完成");
+        } else {
+            log.error("  ❌ 做多开仓失败");
+        }
     }
 
-    private void handleOpenShort(String symbol, double price, int score, int leverage, String reason) {
+    private void handleOpenShort(String symbol, int leverage, String reason) {
         log.info("  ─── 开仓决策: 做空 ───");
-        if (position != null) {
-            log.info("  ⏭ 已有持仓 {}，忽略", position);
+
+        if (orderService.hasPosition(symbol)) {
+            log.info("  ⏭ 币安已有持仓，忽略做空信号");
             return;
         }
-        positionAmount = balance * leverage;
-        currentLeverage = leverage;
 
-        log.info("  ✅ 执行做空开仓");
-        log.info("     开仓价格   = {}", formatPrice(price));
-        log.info("     开仓前余额 = {} USDT", formatBalance(balance));
-        log.info("     杠杆       = {}x", leverage);
-        log.info("     开仓金额   = {} (余额{}×杠杆{}x)", formatBalance(positionAmount), formatBalance(balance), leverage);
-
-        orderService.executeOrder(symbol, "SHORT", price, positionAmount,
-                score, leverage, balance, reason);
-
-        position = "SHORT";
-        entryPrice = price;
-        strategy.resetPositionState(symbol);
-        log.info("  ✔ 做空开仓完成");
+        TradeSignalRecord record = orderService.openShort(symbol, leverage, reason);
+        if (record != null) {
+            strategy.resetPositionState(symbol);
+            log.info("  ✔ 做空开仓完成");
+        } else {
+            log.error("  ❌ 做空开仓失败");
+        }
     }
 
     // ==================== 平仓逻辑 ====================
 
-    private void handleCloseIfNeeded(String symbol, double price, String reason) {
+    private void handleCloseIfNeeded(String symbol, String currentPosition) {
         log.info("  ─── 平仓检查 ───");
-        if (position == null) {
+        if (currentPosition == null) {
             log.info("  ℹ 空仓，无操作");
             return;
         }
 
         boolean shouldClose;
         String closeType;
-        if ("LONG".equals(position)) {
-            log.info("  当前持仓: LONG  entry={}  current={}", formatPrice(entryPrice), formatPrice(price));
+        if ("LONG".equals(currentPosition)) {
             shouldClose = strategy.shouldCloseLong(symbol);
             closeType = "平多";
         } else {
-            log.info("  当前持仓: SHORT  entry={}  current={}", formatPrice(entryPrice), formatPrice(price));
             shouldClose = strategy.shouldCloseShort(symbol);
             closeType = "平空";
         }
@@ -260,32 +237,21 @@ public class BTCBotTask {
             return;
         }
 
-        double pnl = calculatePnL(position, entryPrice, price, positionAmount);
-        double oldBalance = balance;
-        balance += pnl;
+        log.info("  ✅ 执行{}", closeType);
+        TradeSignalRecord record;
+        if ("LONG".equals(currentPosition)) {
+            record = orderService.closeLong(symbol, closeType + ": " + currentPosition);
+        } else {
+            record = orderService.closeShort(symbol, closeType + ": " + currentPosition);
+        }
 
-        log.info("  ✅ {}", closeType);
-        log.info("     平仓价格 = {}", formatPrice(price));
-        log.info("     盈亏     = {} USDT", formatPnl(pnl));
-        log.info("     余额变化 = {} → {}", formatBalance(oldBalance), formatBalance(balance));
-
-        orderService.executeOrder(symbol, "CLOSE", price, positionAmount,
-                0, currentLeverage, balance, closeType + ": " + reason);
-
-        position = null;
-        entryPrice = 0;
-        positionAmount = 0;
-        currentLeverage = 1;
-        strategy.clearPositionState(symbol);
-        log.info("  ✔ {}完成，余额={}", closeType, formatBalance(balance));
-    }
-
-    // ==================== 盈亏计算 ====================
-
-    private static double calculatePnL(String pos, double entry, double exit, double amount) {
-        if (amount <= 0 || entry <= 0) return 0;
-        double returnRate = "LONG".equals(pos) ? (exit - entry) / entry : (entry - exit) / entry;
-        return returnRate * amount;
+        if (record != null) {
+            strategy.clearPositionState(symbol);
+            BigDecimal balance = orderService.getAvailableBalance();
+            log.info("  ✔ {}完成，当前余额={} USDT", closeType, formatBalance(balance.doubleValue()));
+        } else {
+            log.error("  ❌ {}失败", closeType);
+        }
     }
 
     // ==================== 格式化工具 ====================
@@ -296,9 +262,5 @@ public class BTCBotTask {
 
     private static String formatBalance(double v) {
         return String.format("%.2f", v);
-    }
-
-    private static String formatPnl(double v) {
-        return String.format("%s%.2f", v >= 0 ? "+" : "", v);
     }
 }

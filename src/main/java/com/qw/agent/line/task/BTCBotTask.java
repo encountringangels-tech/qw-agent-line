@@ -15,7 +15,9 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * BTC 自动交易定时任务 —— 每 15 分钟（:00 / :15 / :30 / :45）执行一次。
@@ -109,35 +111,46 @@ public class BTCBotTask {
                 currentPosition != null ? formatPrice(currentEntryPrice.doubleValue()) : "-");
 
         try {
-            // ======== 第一步：同步最新 K 线 ========
-            log.info("  ─── [1/3] 同步K线数据 ───");
-            for (String interval : TRADE_INTERVALS) {
-                long latestOpenTime = klineStore.getLatestOpenTime(symbol, interval);
-                List<Kline> klines;
-                if (latestOpenTime == 0) {
-                    klines = macdvService.fetchKlines(symbol, interval, 500);
-                } else {
-                    klines = macdvService.fetchKlinesAfter(symbol, interval, latestOpenTime);
-                }
-                if (klines != null && !klines.isEmpty()) {
-                    klineStore.saveKlines(symbol, interval, klines);
-                    log.info("    [{}/{}] 已同步 {} 条新K线", symbol, interval, klines.size());
-                } else {
-                    log.info("    [{}/{}] 无新K线", symbol, interval);
-                }
-            }
+            // ======== 第一步：并行同步 K 线（5个周期同时拉取） ========
+            log.info("  ─── [1/3] 同步K线数据 (并行) ───");
+            CompletableFuture.allOf(Arrays.stream(TRADE_INTERVALS)
+                    .map(interval -> CompletableFuture.runAsync(() -> {
+                        try {
+                            long latestOpenTime = klineStore.getLatestOpenTime(symbol, interval);
+                            List<Kline> klines = latestOpenTime == 0
+                                    ? macdvService.fetchKlines(symbol, interval, 500)
+                                    : macdvService.fetchKlinesAfter(symbol, interval, latestOpenTime);
+                            if (klines != null && !klines.isEmpty()) {
+                                klineStore.saveKlines(symbol, interval, klines);
+                                log.info("    [{}/{}] 已同步 {} 条新K线", symbol, interval, klines.size());
+                            } else {
+                                log.info("    [{}/{}] 无新K线", symbol, interval);
+                            }
+                        } catch (Exception e) {
+                            log.error("    [{}/{}] K线同步异常: {}", symbol, interval, e.getMessage());
+                        }
+                    }))
+                    .toArray(CompletableFuture[]::new)
+            ).join();
 
-            // ======== 第二步：计算 MACDV ========
-            log.info("  ─── [2/3] 计算MACDV指标 ───");
-            for (String interval : TRADE_INTERVALS) {
-                macdvService.syncMACDV(symbol, interval);
-                MACDVPoint latest = klineStore.getLatestMACDVPoint(symbol, interval);
-                if (latest != null) {
-                    log.info("    [{}/{}] 最新MACDV time={}", symbol, interval, latest.getTime());
-                }
-            }
+            // ======== 第二步：并行计算 MACDV（5个周期同时计算） ========
+            log.info("  ─── [2/3] 计算MACDV指标 (并行) ───");
+            CompletableFuture.allOf(Arrays.stream(TRADE_INTERVALS)
+                    .map(interval -> CompletableFuture.runAsync(() -> {
+                        try {
+                            macdvService.syncMACDV(symbol, interval);
+                            MACDVPoint latest = klineStore.getLatestMACDVPoint(symbol, interval);
+                            if (latest != null) {
+                                log.info("    [{}/{}] 最新MACDV time={}", symbol, interval, latest.getTime());
+                            }
+                        } catch (Exception e) {
+                            log.error("    [{}/{}] MACDV同步异常: {}", symbol, interval, e.getMessage());
+                        }
+                    }))
+                    .toArray(CompletableFuture[]::new)
+            ).join();
 
-            // ======== 第三步：策略交易 ========
+            // ======== 第三步：策略交易（需等前两步全部完成） ========
             log.info("  ─── [3/3] 策略交易 ───");
             TradeDecision decision = strategy.decide(symbol);
             String action = decision.getAction();

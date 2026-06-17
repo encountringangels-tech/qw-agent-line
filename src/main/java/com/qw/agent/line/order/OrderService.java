@@ -123,6 +123,7 @@ public class OrderService {
      *
      * @param symbol 交易对
      * @return 交易记录
+     *
      */
     public TradeSignalRecord closeShort(String symbol, String reason) {
         BigDecimal positionAmt = getPositionAmount(symbol, "SHORT");

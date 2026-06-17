@@ -89,6 +89,7 @@ public class KlineStore {
                 low        REAL    NOT NULL,
                 close      REAL    NOT NULL,
                 volume     REAL    NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 PRIMARY KEY (symbol, interval, open_time)
             )
         """);
@@ -101,6 +102,7 @@ public class KlineStore {
                 macdV    REAL,
                 signal   REAL,
                 hist     REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                 PRIMARY KEY (symbol, interval, time)
             )
         """);
@@ -155,10 +157,10 @@ public class KlineStore {
 
     // ==================== K 线操作 ====================
 
-    /** 批量写入 K 线（幂等，重复 open_time 自动跳过） */
+    /** 批量写入 K 线（幂等，重复 open_time 自动替换，确保增量同步能更新未完成 K 线） */
     public void saveKlines(String symbol, String interval, List<Kline> klines) {
         String sql = """
-            INSERT OR IGNORE INTO kline (symbol, interval, open_time, open, high, low, close, volume)
+            INSERT OR REPLACE INTO kline (symbol, interval, open_time, open, high, low, close, volume)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """;
 

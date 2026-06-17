@@ -292,15 +292,21 @@ public class MACDVService {
                                                    int signalLen, int atrLen) {
         int localCount = klineStore.countMACDVPoints(symbol, interval);
         if (localCount >= klines.size()) {
-            log.info("MACD-V 缓存命中: {}_{} x{}", symbol, interval, klines.size());
             // DB 层按时间范围直接查询，避免全量加载后内存过滤
             long fromTime = klines.get(0).getOpenTime() / 1000;
             long toTime = klines.get(klines.size() - 1).getOpenTime() / 1000;
-            return klineStore.getMACDVPointsRange(symbol, interval, fromTime, toTime);
+            List<MACDVPoint> cached = klineStore.getMACDVPointsRange(symbol, interval, fromTime, toTime);
+            if (cached.size() >= klines.size()) {
+                log.info("MACD-V 缓存命中: {}_{} x{}", symbol, interval, klines.size());
+                return cached;
+            }
+            log.info("MACD-V 缓存部分命中: {}_{} (DB={}, 需要={})，补齐计算",
+                    symbol, interval, cached.size(), klines.size());
+        } else {
+            log.info("MACD-V 缓存不足: {}_{} (本地={}, 需要={})，重新计算",
+                    symbol, interval, localCount, klines.size());
         }
 
-        log.info("MACD-V 缓存不足: {}_{} (本地={}, 需要={})，重新计算",
-                symbol, interval, localCount, klines.size());
         List<MACDVPoint> points = calculator.calculate(klines, fastLen, slowLen, signalLen, atrLen);
         klineStore.saveMACDVPoints(symbol, interval, points);
         return points;

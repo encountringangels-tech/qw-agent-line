@@ -1,4 +1,4 @@
-package com.qw.agent.line.order.config;
+package com.qw.agent.line.openapi.config;
 
 import lombok.Data;
 import org.springframework.boot.context.properties.ConfigurationProperties;

@@ -315,14 +315,28 @@ public class MACDVService {
     // ==================== 币安 API 调用 ====================
 
     /**
-     * 增量拉取：拉取指定时间戳之后的所有 K 线（最多 1000 条）。
-     * @param afterTime 毫秒时间戳，返回的数据 > afterTime
+     * 增量拉取：根据时间范围计算需要的 K 线条数，用 {@code limit} 参数拉取最新数据。
+     * <p>
+     * 覆盖范围：从 {@code afterTime - 一个周期} 到当前时间。
+     * 例如 15m 周期、最新 K 线 13:30 → 需覆盖 13:15 至今 → 约 3 根 K 线 → limit=3。
+     * 超过 1000 条时自动分页（长时间断连后追赶）。
+     *
+     * @param afterTime 毫秒时间戳，本地最新一条 K 线的开盘时间
      */
     @SuppressWarnings("unchecked")
     public List<Kline> fetchKlinesAfter(String symbol, String interval, long afterTime) {
-        String url = BINANCE_KLINE_URL + "?symbol=" + symbol + "&interval=" + interval
-                + "&startTime=" + (afterTime + 1) + "&limit=1000";
-        return doFetchKlines(url);
+        long intervalMs = parseIntervalMs(interval);
+        long now = System.currentTimeMillis();
+        long fromTime = Math.max(0, afterTime - intervalMs);
+        long timeSpan = now - fromTime;
+        int needed = (int) (timeSpan / intervalMs) + 1; // +1 安全余量
+
+        if (needed > 1000) {
+            // 长时间断连，分页追赶
+            return fetchKlinesRange(symbol, interval, fromTime, now);
+        }
+        // 直接取最新 needed 根（天然包含当前未完成 + 上一根刚关闭的完整数据）
+        return fetchKlines(symbol, interval, needed);
     }
 
     @SuppressWarnings("unchecked")
@@ -463,6 +477,19 @@ public class MACDVService {
         m.put("macdvSignal", s.getMacdvSignal());
         m.put("macdvHist", s.getMacdvHist());
         return m;
+    }
+
+    /** 将 K 线周期字符串转为毫秒数（与币安 API 对齐） */
+    private static long parseIntervalMs(String interval) {
+        return switch (interval) {
+            case "5m"  -> 5L * 60 * 1000;
+            case "15m" -> 15L * 60 * 1000;
+            case "30m" -> 30L * 60 * 1000;
+            case "1h"  -> 3600L * 1000;
+            case "4h"  -> 4L * 3600 * 1000;
+            case "1d"  -> 24L * 3600 * 1000;
+            default -> 0;
+        };
     }
 
     private Map<String, Object> buildEmptyResult(String symbol, String interval) {

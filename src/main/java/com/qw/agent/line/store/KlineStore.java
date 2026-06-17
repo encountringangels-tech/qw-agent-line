@@ -157,14 +157,35 @@ public class KlineStore {
 
     // ==================== K 线操作 ====================
 
-    /** 批量写入 K 线（幂等，重复 open_time 自动替换，确保增量同步能更新未完成 K 线） */
+    /** 批量写入 K 线（幂等，重复 open_time 自动替换）。跳过打开不足 30 秒的 K 线（太新的数据无意义，避免影响策略）。 */
     public void saveKlines(String symbol, String interval, List<Kline> klines) {
+        long now = System.currentTimeMillis();
+        long minAgeMs = 30_000; // 30 秒，覆盖 BTCBotTask 的 2 秒和定时任务的 5 秒场景
+
+        // 过滤掉太新的 K 线（当前周期刚打开几秒，数据几乎为空）
+        List<Kline> mature = new java.util.ArrayList<>(klines.size());
+        for (Kline k : klines) {
+            if (now - k.getOpenTime() >= minAgeMs) {
+                mature.add(k);
+            }
+        }
+
+        if (mature.isEmpty()) {
+            log.debug("所有 K 线均太新，跳过写入 [{}/{}] ({} 条)", symbol, interval, klines.size());
+            return;
+        }
+
+        int skipped = klines.size() - mature.size();
+        if (skipped > 0) {
+            log.debug("跳过 {} 条太新的 K 线 [{}/{}]", skipped, symbol, interval);
+        }
+
         String sql = """
             INSERT OR REPLACE INTO kline (symbol, interval, open_time, open, high, low, close, volume)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
-        jdbc.batchUpdate(sql, klines, klines.size(), (ps, kline) -> {
+        jdbc.batchUpdate(sql, mature, mature.size(), (ps, kline) -> {
             ps.setString(1, symbol);
             ps.setString(2, interval);
             ps.setLong(3, kline.getOpenTime());
@@ -175,7 +196,7 @@ public class KlineStore {
             ps.setDouble(8, kline.getVolume().doubleValue());
         });
 
-        log.debug("已写入 {} 条 K 线 [{}/{}]", klines.size(), symbol, interval);
+        log.debug("已写入 {} 条 K 线 [{}/{}]", mature.size(), symbol, interval);
     }
 
     /** 读取某个 (symbol, interval) 的最新 limit 条 K 线（按时间正序） */

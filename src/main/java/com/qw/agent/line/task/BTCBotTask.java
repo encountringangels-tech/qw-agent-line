@@ -56,7 +56,7 @@ public class BTCBotTask {
     private static int currentLeverage = 1;
 
     /** 策略交易需要同步的周期（与 MultiTimeframeStrategy 一致） */
-    private static final String[] TRADE_INTERVALS = {"5m", "15m", "1h", "4h", "1d"};
+    private static final String[] TRADE_INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"};
 
     // ==================== 依赖 ====================
 
@@ -92,10 +92,11 @@ public class BTCBotTask {
      * <p>以 15:00 触发为例：</p>
      * <pre>
      *   14:45～15:00  15m 蜡烛交易中
-     *   15:00:00     蜡烛收盘，BTCBotTask 触发
-     *   15:00:01     [1/3] 拉取刚收盘的 K 线并保存
-     *   15:00:02     [2/3] 计算该 K 线的 MACDV
-     *   15:00:03     [3/3] strategy.decide() 基于最新 MACDV 做出判断
+     *   15:00:00     蜡烛收盘
+     *   15:00:02     BTCBotTask 触发（延后2秒，等待K线数据就绪）
+     *   15:00:03     [1/3] 拉取刚收盘的 K 线并保存
+     *   15:00:04     [2/3] 计算该 K 线的 MACDV
+     *   15:00:05     [3/3] strategy.decide() 基于最新 MACDV 做出判断
      *                 → 若有信号（LONG/SHORT），handleOpen* 立即执行
      *                 → 不等待下一根 K 线
      * </pre>
@@ -103,7 +104,7 @@ public class BTCBotTask {
      * <p>三步合一的目的是保证 decide() 使用的 MACDV 数据是最新的，
      * 避免因外部定时任务同步滞后导致基于过期数据交易。</p>
      */
-    @Scheduled(cron = "0 0,15,30,45 * * * ?")
+    @Scheduled(cron = "2 0,15,30,45 * * * ?")
     public void execute() {
         String symbol = "BTCUSDT";
         long tick = System.currentTimeMillis();

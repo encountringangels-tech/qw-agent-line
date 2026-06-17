@@ -213,10 +213,10 @@ public class MACDVService {
     private static final int DEFAULT_ATR_LEN    = 26;
 
     /**
-     * 定时任务调用 —— 检查近 7 天 K 线是否都已计算 MACD-V，缺失则自动补齐。
+     * 定时任务调用 —— 只计算缺失的 MACD-V 点并增量写入，避免重复全量重算。
      * <p>
-     * 全量重算后通过 {@code INSERT OR IGNORE} 写入，已有时间点自动跳过，
-     * 只有新增 K 线对应的 MACD-V 点会被持久化。
+     * 仅读取最后 N 条 K 线（N = 缺失数 + 计算所需的历史缓冲区），
+     * 计算后只写入时间戳大于已有最新 MACDV 点的新数据。
      */
     public void syncMACDV(String symbol, String interval) {
         int totalKlines = klineStore.countKlines(symbol, interval);
@@ -238,15 +238,34 @@ public class MACDVService {
             return;
         }
 
-        log.info("检测到 [{}/{}] 近 7 天有 {} 根 K 线缺少 MACD-V，开始重算", symbol, interval, missing);
+        log.info("检测到 [{}/{}] 近 7 天有 {} 根 K 线缺少 MACD-V，开始补齐", symbol, interval, missing);
 
-        List<Kline> klines = klineStore.getKlines(symbol, interval, totalKlines);
-        List<MACDVPoint> points = calculator.calculate(
+        // 只读取最后 N 条 K 线：缺失数 + 计算所需的缓冲区（慢线+ATR+信号线+余量）
+        int buffer = DEFAULT_SLOW_LEN + DEFAULT_ATR_LEN + DEFAULT_SIGNAL_LEN + 10;
+        int fetchCount = Math.min(missing + buffer, totalKlines);
+        List<Kline> klines = klineStore.getKlines(symbol, interval, fetchCount);
+
+        // 计算 MACDV，但只提取真正新增的点写入
+        List<MACDVPoint> allPoints = calculator.calculate(
                 klines, DEFAULT_FAST_LEN, DEFAULT_SLOW_LEN, DEFAULT_SIGNAL_LEN, DEFAULT_ATR_LEN);
-        klineStore.saveMACDVPoints(symbol, interval, points);
 
+        // 找到已有最新 MACDV 点的时间（秒），只保存此时间之后的点
+        MACDVPoint latestPoint = klineStore.getLatestMACDVPoint(symbol, interval);
+        long latestTimeSec = latestPoint != null ? latestPoint.getTime() : 0;
+
+        List<MACDVPoint> newPoints = allPoints.stream()
+                .filter(p -> p.getTime() > latestTimeSec)
+                .collect(java.util.stream.Collectors.toList());
+
+        if (newPoints.isEmpty()) {
+            log.info("MACD-V 已是最新 [{}/{}]（无需写入）", symbol, interval);
+            return;
+        }
+
+        klineStore.saveMACDVPoints(symbol, interval, newPoints);
         int macdvTotal = klineStore.countMACDVPoints(symbol, interval);
-        log.info("MACD-V 已同步 [{}/{}]: 总计 {} 点", symbol, interval, macdvTotal);
+        log.info("MACD-V 已同步 [{}/{}]: 新增 {} 点，总计 {} 点",
+                symbol, interval, newPoints.size(), macdvTotal);
     }
 
     // ==================== 本地缓存读取（KlineStore） ====================

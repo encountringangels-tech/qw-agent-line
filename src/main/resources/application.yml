@@ -7,6 +7,21 @@ spring:
   jackson:
     time-zone: Asia/Shanghai
 
+# ==================== Binance API 配置 (合约) ====================
+binance:
+  api:
+    base-url: https://testnet.binancefuture.com
+    ws-base-url: wss://stream.binancefuture.com
+    api-key: ${BINANCE_API_KEY:MChpufxXzymr3kAOPCAJ0HVe26wgR1LfyEohsmZp17qb7UckNEercXynlhM6CLNh}
+    secret-key: ${BINANCE_SECRET_KEY:T9qQmcBkEkCA6zesSxHeuFDLrPv6wmiU8W0MCkyUIjXs2GrGHKSZiiUvAEEHb0rF}
+    recv-window: 5000
+  futures:
+    testnet: true                           # true=测试网, false=实盘
+    default-leverage: 5                     # 默认杠杆倍数
+    max-leverage: 5                        # 最大杠杆倍数
+    default-position-size-usdt: 10000         # 默认每笔开仓金额 (USDT)
+    max-position-size-usdt: 10000           # 单笔最大开仓金额 (USDT)
+
 logging:
   level:
     root: INFO

@@ -100,13 +100,13 @@ public class MultiTimeframeStrategy {
     // ==================== 回测优化新增参数 ====================
 
     /** 4H MACDV 从持仓最高点回落阈值（超出此比例即视为见顶平仓） */
-    static final double H4_PEAK_RETRACE_THRESHOLD = 0.15;  // 15%，回测最优值
+    static final double H4_PEAK_RETRACE_THRESHOLD = 0.10;  // 10%，Round2最优(MAX72配合紧回撤)
 
     /** 最大持仓 15min K 线数（时间止损，96根 = 24小时） */
-    static final int MAX_POSITION_BARS = 96;
+    static final int MAX_POSITION_BARS = 72;
 
     /** 1H MACDV 辅助见顶回落阈值（仅当4H未触发时使用） */
-    static final double H1_PEAK_RETRACE_THRESHOLD = 0.20;  // 20%，比4H宽松避免假信号
+    static final double H1_PEAK_RETRACE_THRESHOLD = 0.12;  // 12%，比4H略宽松避免假信号
 
     // ==================== 持仓状态跟踪 ====================
 

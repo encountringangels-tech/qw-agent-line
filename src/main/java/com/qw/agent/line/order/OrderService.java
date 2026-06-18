@@ -46,11 +46,12 @@ public class OrderService {
      * @return 交易记录
      */
     public TradeSignalRecord openLong(String symbol, int leverage, String reason) {
-        // 1. 从币安查询可用余额
+        // 1. 从币安查询可用余额，留 5% 作为保证金缓冲
         BigDecimal usdtBalance = getAvailableBalance();
-        BigDecimal usdtAmount = usdtBalance.multiply(BigDecimal.valueOf(leverage));
+        BigDecimal usdtAmount = usdtBalance.multiply(BigDecimal.valueOf(0.95))
+                .multiply(BigDecimal.valueOf(leverage));
 
-        log.info("开多: symbol={}, 可用余额={} USDT, 开仓金额={} USDT, 杠杆={}x",
+        log.info("开多: symbol={}, 可用余额={} USDT, 开仓金额={} USDT, 杠杆={}x (已留5%缓冲)",
                 symbol, usdtBalance, usdtAmount, leverage);
 
         // 2. 执行市价开多
@@ -78,9 +79,10 @@ public class OrderService {
      */
     public TradeSignalRecord openShort(String symbol, int leverage, String reason) {
         BigDecimal usdtBalance = getAvailableBalance();
-        BigDecimal usdtAmount = usdtBalance.multiply(BigDecimal.valueOf(leverage));
+        BigDecimal usdtAmount = usdtBalance.multiply(BigDecimal.valueOf(0.95))
+                .multiply(BigDecimal.valueOf(leverage));
 
-        log.info("开空: symbol={}, 可用余额={} USDT, 开仓金额={} USDT, 杠杆={}x",
+        log.info("开空: symbol={}, 可用余额={} USDT, 开仓金额={} USDT, 杠杆={}x (已留5%缓冲)",
                 symbol, usdtBalance, usdtAmount, leverage);
 
         String json = binanceClient.marketSell(symbol, usdtAmount);

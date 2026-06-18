@@ -85,7 +85,7 @@ public class MultiTimeframeStrategy {
 
     // ==================== 评分阈值 ====================
 
-    static final int SCORE_LONG_THRESHOLD = 8;
+    static final int SCORE_LONG_THRESHOLD = 7;
     static final int SCORE_SHORT_THRESHOLD = 8;
 
     /** 平仓后冷却K线数（防止立即反向开仓被反复打脸） */
@@ -100,7 +100,7 @@ public class MultiTimeframeStrategy {
     // ==================== 回测优化新增参数 ====================
 
     /** 4H MACDV 从持仓最高点回落阈值（超出此比例即视为见顶平仓） */
-    static final double H4_PEAK_RETRACE_THRESHOLD = 0.10;  // 10%，Round2最优(MAX72配合紧回撤)
+    static final double H4_PEAK_RETRACE_THRESHOLD = 0.13;  // 13%，密集扫描最优(回撤11.74%+胜率58.6%)
 
     /** 最大持仓 15min K 线数（时间止损，96根 = 24小时） */
     static final int MAX_POSITION_BARS = 72;

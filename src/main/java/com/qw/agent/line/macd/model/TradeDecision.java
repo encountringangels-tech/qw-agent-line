@@ -1,4 +1,4 @@
-package com.qw.agent.line.store;
+package com.qw.agent.line.macd.model;
 
 /**
  * 多周期MACDV买卖决策结果 —— 直接回答"下一根K线是否可以立即买卖"。

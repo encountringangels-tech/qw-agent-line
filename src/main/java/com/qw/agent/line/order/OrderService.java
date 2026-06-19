@@ -2,16 +2,15 @@ package com.qw.agent.line.order;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.qw.agent.line.model.TradeSignalRecord;
+import com.qw.agent.line.macd.model.TradeSignalRecord;
 import com.qw.agent.line.openapi.client.BinanceFuturesClient;
 import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 
@@ -345,8 +344,7 @@ public class OrderService {
         record.setLeverage(leverage);
         record.setBalance(balance);
         record.setReason(reason);
-        record.setCreatedAt(LocalDateTime.now().format(
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")));
+        record.setCreatedAt(TimeUtil.nowFormatted());
 
         klineStore.saveTradeSignal(record);
         log.info("交易记录: {} {} price={} amount={} leverage={}x balance={} reason={}",

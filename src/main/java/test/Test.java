@@ -1,15 +1,15 @@
 package test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.qw.agent.line.indicator.MACDVCalculator;
-import com.qw.agent.line.model.AIAnalysisPayload;
-import com.qw.agent.line.model.Kline;
-import com.qw.agent.line.model.MACDVPoint;
-import com.qw.agent.line.service.MACDVService;
+import com.qw.agent.line.macd.indicator.MACDVCalculator;
+import com.qw.agent.line.macd.model.AIAnalysisPayload;
+import com.qw.agent.line.macd.model.Kline;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.macd.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
-import com.qw.agent.line.store.MultiTimeframeStrategy;
-import com.qw.agent.line.store.TradeDecision;
-import com.qw.agent.line.strategy.MACDVSignalGenerator;
+import com.qw.agent.line.macd.strategy.MultiTimeframeStrategy;
+import com.qw.agent.line.macd.model.TradeDecision;
+import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
 import org.sqlite.SQLiteDataSource;
 
 import java.io.File;

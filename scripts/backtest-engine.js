@@ -56,17 +56,17 @@ const DEFAULT_PARAMS = {
   TREND_PARTIAL: 1,
   
   // 出场参数
-  H4_PEAK_RETRACE: 0.15,
-  H1_PEAK_RETRACE: 0.20,
-  MAX_BARS: 96,
+  H4_PEAK_RETRACE: 0.10,
+  H1_PEAK_RETRACE: 0.12,
+  MAX_BARS: 72,
   COOLDOWN_BARS: 3,
   
   // 杠杆
   USE_1H_SHORT_FILTER: true,    // 1H<-150禁做空, 1H<-100降2x
-  USE_DIVERGENCE_FILTER: true,  // 30m/15m背离降2x
+  USE_DIVERGENCE_FILTER: false, // 30m/15m背离降2x（Java无此逻辑，关闭）
   
   // 实验性参数
-  SKIP_SCORE_10: false,         // 过滤 Score 10 信号
+  SKIP_SCORE_10: true,          // 过滤 Score 10 信号（与Java一致，始终过滤）
 };
 
 // ==================== 工具函数 ====================
@@ -186,21 +186,25 @@ class BacktestEngine {
     return this;
   }
 
-  /** 向前指针：从arr中取 ≤ tLimit 的最新一条 */
-  _advance(arr, ptr, tLimit) {
-    while (ptr.idx + 1 < arr.length && arr[ptr.idx + 1].t <= tLimit) ptr.idx++;
-    return (ptr.idx >= 0 && ptr.idx < arr.length && arr[ptr.idx].t <= tLimit) ? arr[ptr.idx] : null;
+  /**
+   * 向前指针：从arr中取最新一条已收盘的K线。
+   * @param {boolean} inclusive true=允许t==tLimit（仅15m用）, false=要求t<tLimit（其他周期，避免用未收盘K线）
+   */
+  _advance(arr, ptr, tLimit, inclusive) {
+    const cmp = inclusive ? (t => t <= tLimit) : (t => t < tLimit);
+    while (ptr.idx + 1 < arr.length && cmp(arr[ptr.idx + 1].t)) ptr.idx++;
+    return (ptr.idx >= 0 && ptr.idx < arr.length && cmp(arr[ptr.idx].t)) ? arr[ptr.idx] : null;
   }
 
-  /** 获取某一时刻的所有周期快照 */
+  /** 获取某一时刻的所有周期快照（15m用inclusive，其他用exclusive避免未来函数） */
   _snapshot(ptrs, t) {
     return {
-      m5m:  this._advance(this.timeframes['5m'],  ptrs['5m'],  t),
-      m15m: this._advance(this.timeframes['15m'], ptrs['15m'], t),
-      m30m: this._advance(this.timeframes['30m'], ptrs['30m'], t),
-      m1h:  this._advance(this.timeframes['1h'],  ptrs['1h'],  t),
-      m4h:  this._advance(this.timeframes['4h'],  ptrs['4h'],  t),
-      m1d:  this._advance(this.timeframes['1d'],  ptrs['1d'],  t),
+      m5m:  this._advance(this.timeframes['5m'],  ptrs['5m'],  t, false),
+      m15m: this._advance(this.timeframes['15m'], ptrs['15m'], t, true),
+      m30m: this._advance(this.timeframes['30m'], ptrs['30m'], t, false),
+      m1h:  this._advance(this.timeframes['1h'],  ptrs['1h'],  t, false),
+      m4h:  this._advance(this.timeframes['4h'],  ptrs['4h'],  t, false),
+      m1d:  this._advance(this.timeframes['1d'],  ptrs['1d'],  t, false),
     };
   }
 

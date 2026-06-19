@@ -1,15 +1,15 @@
 package com.qw.agent.line.store;
 
-import com.qw.agent.line.model.Kline;
-import com.qw.agent.line.model.MACDVPoint;
-import com.qw.agent.line.model.TradeSignalRecord;
+import com.qw.agent.line.macd.model.Kline;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.macd.model.TradeSignalRecord;
+import com.qw.agent.line.util.DbPathUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
-import java.io.File;
 import java.math.BigDecimal;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -40,18 +40,7 @@ public class KlineStore {
      * 确保数据库文件所在目录存在（SQLite 驱动只创建文件，不创建目录）。
      */
     private void ensureDbDir() {
-        try {
-            String userDir = System.getProperty("user.dir");
-            File dir = new File(userDir).getName().equals("qw-agent-line")
-                    ? new File(userDir, "data")
-                    : new File(userDir, "qw-agent-line/data");
-            if (!dir.exists()) {
-                dir.mkdirs();
-                log.info("已创建数据库目录: {}", dir.getAbsolutePath());
-            }
-        } catch (Exception e) {
-            log.warn("无法创建数据库目录: {}", e.getMessage());
-        }
+        DbPathUtil.ensureDataDir();
     }
 
     /**

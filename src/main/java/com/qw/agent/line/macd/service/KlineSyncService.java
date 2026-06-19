@@ -1,7 +1,8 @@
-package com.qw.agent.line.service;
+package com.qw.agent.line.macd.service;
 
-import com.qw.agent.line.model.Kline;
+import com.qw.agent.line.macd.model.Kline;
 import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -65,7 +66,7 @@ public class KlineSyncService {
         List<Kline> klines;
         if (latestOpenTime == 0) {
             // 首次同步：根据间隔周期自动计算历史 K 线条数（覆盖约 30 天）
-            int limit = calculateInitialLimit(interval);
+            int limit = TimeUtil.calculateInitialLimit(interval);
             log.info("首次同步 [{}/{}]，拉取 {} 条历史数据", symbol, interval, limit);
             klines = macdvService.fetchKlines(symbol, interval, limit);
         } else {
@@ -85,36 +86,5 @@ public class KlineSyncService {
         } catch (Exception e) {
             log.error("MACD-V 同步失败 [{}/{}]: {}", symbol, interval, e.getMessage());
         }
-    }
-
-    /**
-     * 根据 K 线间隔周期自动计算首次同步需要拉取的条数。
-     * <p>
-     * 目标覆盖天数约 30 天，上限 1000 条（币安单次 API 限制）。
-     * <ul>
-     *   <li>5m  → 8640 条/30天，上限 1000</li>
-     *   <li>15m → 2880 条/30天，上限 1000</li>
-     *   <li>30m → 1440 条/30天，上限 1000</li>
-     *   <li>1h  → 720 条/30天</li>
-     *   <li>4h  → 180 条/30天</li>
-     *   <li>1d  → 30 条/30天</li>
-     * </ul>
-     */
-    private static int calculateInitialLimit(String interval) {
-        long intervalMs = switch (interval) {
-            case "5m"  -> 5L * 60 * 1000;
-            case "15m" -> 15L * 60 * 1000;
-            case "30m" -> 30L * 60 * 1000;
-            case "1h"  -> 3600L * 1000;
-            case "4h"  -> 4L * 3600 * 1000;
-            case "1d"  -> 24L * 3600 * 1000;
-            default -> 0;
-        };
-
-        // 目标覆盖 30 天
-        long targetMs = 30L * 24 * 3600 * 1000;
-        int count = (int) (targetMs / intervalMs);
-        // 币安单次最多 1000 条
-        return Math.min(count, 1000);
     }
 }

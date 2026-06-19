@@ -1,4 +1,4 @@
-package com.qw.agent.line.model;
+package com.qw.agent.line.macd.model;
 
 import java.math.BigDecimal;
 

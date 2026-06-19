@@ -1,6 +1,6 @@
 package test;
 
-import com.qw.agent.line.model.TradeSignalRecord;
+import com.qw.agent.line.macd.model.TradeSignalRecord;
 import com.qw.agent.line.store.KlineStore;
 import org.sqlite.SQLiteDataSource;
 

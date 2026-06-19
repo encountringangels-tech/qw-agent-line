@@ -1,8 +1,9 @@
-package com.qw.agent.line.strategy;
+package com.qw.agent.line.macd.strategy;
 
-import com.qw.agent.line.model.LatestSignal;
-import com.qw.agent.line.model.MACDVPoint;
-import com.qw.agent.line.model.TradeSignal;
+import com.qw.agent.line.macd.model.LatestSignal;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.macd.model.TradeSignal;
+import com.qw.agent.line.util.MathUtil;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -101,12 +102,12 @@ public class MACDVSignalGenerator {
 
                 if (isD && histVBottom) {
                     signals.add(new TradeSignal(cur.getTime(), "d", "d", "开多",
-                            calcStrength(cm, dTh, true)));
+                            MathUtil.calcStrength(cm, dTh, true)));
                     state = "LONG";
                     entryIdx = i;
                 } else if (isK && histVTop) {
                     signals.add(new TradeSignal(cur.getTime(), "k", "k", "开空",
-                            calcStrength(cm, kTh, false)));
+                            MathUtil.calcStrength(cm, kTh, false)));
                     state = "SHORT";
                     entryIdx = i;
                 }
@@ -198,13 +199,13 @@ public class MACDVSignalGenerator {
                     entryIdx = i;
                     lastSignalType = "d";
                     lastReason = "开多";
-                    lastStrength = calcStrength(cm, dTh, true);
+                    lastStrength = MathUtil.calcStrength(cm, dTh, true);
                 } else if (isK && histVTop) {
                     state = "SHORT";
                     entryIdx = i;
                     lastSignalType = "k";
                     lastReason = "开空";
-                    lastStrength = calcStrength(cm, kTh, false);
+                    lastStrength = MathUtil.calcStrength(cm, kTh, false);
                 }
             } else if ("LONG".equals(state) && histVTop && (i - entryIdx) >= minHoldBars) {
                 state = "NONE";
@@ -233,19 +234,10 @@ public class MACDVSignalGenerator {
                 lastSignalType,
                 lastStrength,
                 lastReason,
-                round2(curMacdV),
-                round2(curSignal),
-                round2(curHist)
+                MathUtil.round2(curMacdV),
+                MathUtil.round2(curSignal),
+                MathUtil.round2(curHist)
         );
     }
 
-    /** 计算信号强度（0~1），值越大信号越可靠 */
-    private double calcStrength(double macdv, int threshold, boolean isLong) {
-        double dist = isLong ? (threshold - macdv) : (macdv - threshold);
-        return round2(0.45 + 0.20 * Math.min(1.0, Math.max(0, dist) / 100.0));
-    }
-
-    private double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
-    }
 }

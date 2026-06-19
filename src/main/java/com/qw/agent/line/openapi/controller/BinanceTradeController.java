@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.openapi.client.BinanceFuturesClient;
 import com.qw.agent.line.openapi.model.resp.BinanceOrderResp;
 import com.qw.agent.line.openapi.model.resp.BinancePositionResp;
+import com.qw.agent.line.util.ConvertUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.*;
@@ -257,8 +258,8 @@ public class BinanceTradeController {
                     new TypeReference<Map<String, Object>>() {});
             // 币安合约市价单返回 cumQty（单位=基础币种）而不返回 cumQuote/avgPrice，
             // 所以 avgPrice 从 cumQty 计算：cumQty / executedQty（仅当二者不同时才有意义）
-            BigDecimal executedQty = toBigDec(m.get("executedQty"));
-            BigDecimal cumQty = toBigDec(m.get("cumQty"));
+            BigDecimal executedQty = ConvertUtil.toBigDec(m.get("executedQty"));
+            BigDecimal cumQty = ConvertUtil.toBigDec(m.get("cumQty"));
             BigDecimal avgPrice;
             if (executedQty != null && executedQty.compareTo(BigDecimal.ZERO) > 0
                     && cumQty != null && cumQty.compareTo(executedQty) != 0
@@ -266,23 +267,23 @@ public class BinanceTradeController {
                 // cumQty = quote 累计成交额时，才能算出均价
                 avgPrice = cumQty.divide(executedQty, 2, java.math.RoundingMode.HALF_UP);
             } else {
-                avgPrice = toBigDec(m.get("avgPrice"));  // 可能 null
+                avgPrice = ConvertUtil.toBigDec(m.get("avgPrice"));  // 可能 null
             }
             return BinanceOrderResp.builder()
-                    .orderId(str(m.get("orderId")))
-                    .clientOrderId(str(m.get("clientOrderId")))
-                    .symbol(str(m.get("symbol")))
-                    .side(str(m.get("side")))
-                    .type(str(m.get("type")))
-                    .positionSide(str(m.get("positionSide")))
-                    .status(str(m.get("status")))
-                    .origQuantity(toBigDec(m.get("origQty")))
+                    .orderId(ConvertUtil.str(m.get("orderId")))
+                    .clientOrderId(ConvertUtil.str(m.get("clientOrderId")))
+                    .symbol(ConvertUtil.str(m.get("symbol")))
+                    .side(ConvertUtil.str(m.get("side")))
+                    .type(ConvertUtil.str(m.get("type")))
+                    .positionSide(ConvertUtil.str(m.get("positionSide")))
+                    .status(ConvertUtil.str(m.get("status")))
+                    .origQuantity(ConvertUtil.toBigDec(m.get("origQty")))
                     .executedQuantity(executedQty)
                     .cumQuote(cumQty)
-                    .price(toBigDec(m.get("price")))
+                    .price(ConvertUtil.toBigDec(m.get("price")))
                     .avgPrice(avgPrice)
-                    .filled("FILLED".equals(str(m.get("status"))))
-                    .failureReason(str(m.get("failureReason")))
+                    .filled("FILLED".equals(ConvertUtil.str(m.get("status"))))
+                    .failureReason(ConvertUtil.str(m.get("failureReason")))
                     .rawJson(json)
                     .build();
         } catch (Exception e) {
@@ -307,30 +308,30 @@ public class BinanceTradeController {
     }
 
     private BinanceOrderResp toOrderResp(Map<String, Object> m) {
-        BigDecimal executedQty = toBigDec(m.get("executedQty"));
-        BigDecimal cumQty = toBigDec(m.get("cumQty"));
+        BigDecimal executedQty = ConvertUtil.toBigDec(m.get("executedQty"));
+        BigDecimal cumQty = ConvertUtil.toBigDec(m.get("cumQty"));
         BigDecimal avgPrice;
         if (executedQty != null && executedQty.compareTo(BigDecimal.ZERO) > 0
                 && cumQty != null && cumQty.compareTo(executedQty) != 0
                 && cumQty.compareTo(BigDecimal.ZERO) > 0) {
             avgPrice = cumQty.divide(executedQty, 2, java.math.RoundingMode.HALF_UP);
         } else {
-            avgPrice = toBigDec(m.get("avgPrice"));
+            avgPrice = ConvertUtil.toBigDec(m.get("avgPrice"));
         }
         return BinanceOrderResp.builder()
-                .orderId(str(m.get("orderId")))
-                .clientOrderId(str(m.get("clientOrderId")))
-                .symbol(str(m.get("symbol")))
-                .side(str(m.get("side")))
-                .type(str(m.get("type")))
-                .positionSide(str(m.get("positionSide")))
-                .status(str(m.get("status")))
-                .origQuantity(toBigDec(m.get("origQty")))
+                .orderId(ConvertUtil.str(m.get("orderId")))
+                .clientOrderId(ConvertUtil.str(m.get("clientOrderId")))
+                .symbol(ConvertUtil.str(m.get("symbol")))
+                .side(ConvertUtil.str(m.get("side")))
+                .type(ConvertUtil.str(m.get("type")))
+                .positionSide(ConvertUtil.str(m.get("positionSide")))
+                .status(ConvertUtil.str(m.get("status")))
+                .origQuantity(ConvertUtil.toBigDec(m.get("origQty")))
                 .executedQuantity(executedQty)
                 .cumQuote(cumQty)
-                .price(toBigDec(m.get("price")))
+                .price(ConvertUtil.toBigDec(m.get("price")))
                 .avgPrice(avgPrice)
-                .filled("FILLED".equals(str(m.get("status"))))
+                .filled("FILLED".equals(ConvertUtil.str(m.get("status"))))
                 .build();
     }
 
@@ -347,51 +348,20 @@ public class BinanceTradeController {
 
     private BinancePositionResp toPositionResp(Map<String, Object> m) {
         return BinancePositionResp.builder()
-                .symbol(str(m.get("symbol")))
-                .positionSide(str(m.get("positionSide")))
-                .positionAmt(toBigDec(m.get("positionAmt")))
-                .entryPrice(toBigDec(m.get("entryPrice")))
-                .markPrice(toBigDec(m.get("markPrice")))
-                .liquidationPrice(toBigDec(m.get("liquidationPrice")))
-                .unrealizedProfit(toBigDec(m.get("unRealizedProfit")))
-                .realizedProfit(toBigDec(m.get("realizedProfit")))
-                .leverage(intVal(m.get("leverage")))
-                .notionalValue(toBigDec(m.get("notional")))
-                .isolatedMargin(toBigDec(m.get("isolatedMargin")))
-                .updateTime(longVal(m.get("updateTime")))
+                .symbol(ConvertUtil.str(m.get("symbol")))
+                .positionSide(ConvertUtil.str(m.get("positionSide")))
+                .positionAmt(ConvertUtil.toBigDec(m.get("positionAmt")))
+                .entryPrice(ConvertUtil.toBigDec(m.get("entryPrice")))
+                .markPrice(ConvertUtil.toBigDec(m.get("markPrice")))
+                .liquidationPrice(ConvertUtil.toBigDec(m.get("liquidationPrice")))
+                .unrealizedProfit(ConvertUtil.toBigDec(m.get("unRealizedProfit")))
+                .realizedProfit(ConvertUtil.toBigDec(m.get("realizedProfit")))
+                .leverage(ConvertUtil.intVal(m.get("leverage")))
+                .notionalValue(ConvertUtil.toBigDec(m.get("notional")))
+                .isolatedMargin(ConvertUtil.toBigDec(m.get("isolatedMargin")))
+                .updateTime(ConvertUtil.longVal(m.get("updateTime")))
                 .build();
     }
 
-    // ==================== 工具 ====================
-
-    private static String str(Object v) {
-        return v != null ? v.toString() : null;
-    }
-
-    private static BigDecimal toBigDec(Object v) {
-        if (v == null) return null;
-        try {
-            return new BigDecimal(v.toString());
-        } catch (NumberFormatException e) {
-            return BigDecimal.ZERO;
-        }
-    }
-
-    private static int intVal(Object v) {
-        if (v == null) return 0;
-        try {
-            return Integer.parseInt(v.toString());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    private static long longVal(Object v) {
-        if (v == null) return 0;
-        try {
-            return Long.parseLong(v.toString());
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
+    // ==================== 工具（委托给 ConvertUtil） ====================
 }

@@ -1,11 +1,12 @@
-package com.qw.agent.line.service;
+package com.qw.agent.line.macd.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.qw.agent.line.indicator.MACDVCalculator;
-import com.qw.agent.line.model.*;
+import com.qw.agent.line.macd.indicator.MACDVCalculator;
+import com.qw.agent.line.macd.model.*;
 import com.qw.agent.line.store.KlineStore;
-import com.qw.agent.line.store.TradeDecision;
-import com.qw.agent.line.strategy.MACDVSignalGenerator;
+import com.qw.agent.line.macd.model.TradeDecision;
+import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
+import com.qw.agent.line.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -231,7 +232,7 @@ public class MACDVService {
         }
 
         // 检查近 7 天是否有 K 线缺少对应 MACD-V
-        long sevenDaysAgo = System.currentTimeMillis() - 7L * 24 * 3600 * 1000;
+        long sevenDaysAgo = TimeUtil.daysAgoMs(7);
         int missing = klineStore.countKlinesWithoutMACDV(symbol, interval, sevenDaysAgo);
         if (missing == 0) {
             log.debug("MACD-V 已是最新 [{}/{}]", symbol, interval);
@@ -325,7 +326,7 @@ public class MACDVService {
      */
     @SuppressWarnings("unchecked")
     public List<Kline> fetchKlinesAfter(String symbol, String interval, long afterTime) {
-        long intervalMs = parseIntervalMs(interval);
+        long intervalMs = TimeUtil.parseIntervalMs(interval);
         long now = System.currentTimeMillis();
         long fromTime = Math.max(0, afterTime - intervalMs);
         long timeSpan = now - fromTime;
@@ -477,19 +478,6 @@ public class MACDVService {
         m.put("macdvSignal", s.getMacdvSignal());
         m.put("macdvHist", s.getMacdvHist());
         return m;
-    }
-
-    /** 将 K 线周期字符串转为毫秒数（与币安 API 对齐） */
-    private static long parseIntervalMs(String interval) {
-        return switch (interval) {
-            case "5m"  -> 5L * 60 * 1000;
-            case "15m" -> 15L * 60 * 1000;
-            case "30m" -> 30L * 60 * 1000;
-            case "1h"  -> 3600L * 1000;
-            case "4h"  -> 4L * 3600 * 1000;
-            case "1d"  -> 24L * 3600 * 1000;
-            default -> 0;
-        };
     }
 
     private Map<String, Object> buildEmptyResult(String symbol, String interval) {

@@ -1,13 +1,14 @@
 package com.qw.agent.line.task;
 
-import com.qw.agent.line.model.Kline;
-import com.qw.agent.line.model.MACDVPoint;
-import com.qw.agent.line.model.TradeSignalRecord;
+import com.qw.agent.line.macd.model.Kline;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.macd.model.TradeSignalRecord;
 import com.qw.agent.line.order.OrderService;
-import com.qw.agent.line.service.MACDVService;
+import com.qw.agent.line.macd.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
-import com.qw.agent.line.store.MultiTimeframeStrategy;
-import com.qw.agent.line.store.TradeDecision;
+import com.qw.agent.line.macd.strategy.MultiTimeframeStrategy;
+import com.qw.agent.line.macd.model.TradeDecision;
+import com.qw.agent.line.util.ConvertUtil;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -67,10 +68,10 @@ public class BTCBotTask {
 
         log.info("┌─────────────────────────────────────────────");
         log.info("│ BTC 交易机器人初始化完成");
-        log.info("│   账户余额: {} USDT", formatBalance(balance.doubleValue()));
+        log.info("│   账户余额: {} USDT", ConvertUtil.formatBalance(balance.doubleValue()));
         log.info("│   当前持仓: {} (入场价={})",
                 direction != null ? direction : "空仓",
-                direction != null ? formatPrice(entryPrice.doubleValue()) : "-");
+                direction != null ? ConvertUtil.formatPrice(entryPrice.doubleValue()) : "-");
         log.info("│   执行周期: 每15分钟 (:00/15/30/45)");
         log.info("│   数据同步: K线 → MACDV → 交易（三步合一）");
         log.info("└─────────────────────────────────────────────");
@@ -106,9 +107,9 @@ public class BTCBotTask {
         log.info("═════════ BTC 自动交易 [{}] ═════════", symbol);
         log.info("  触发时刻 → {} (Unix ms)", tick);
         log.info("  当前状态 → 余额={}  持仓={}  开仓价={}",
-                formatBalance(currentBalance.doubleValue()),
+                ConvertUtil.formatBalance(currentBalance.doubleValue()),
                 currentPosition != null ? currentPosition : "空仓",
-                currentPosition != null ? formatPrice(currentEntryPrice.doubleValue()) : "-");
+                currentPosition != null ? ConvertUtil.formatPrice(currentEntryPrice.doubleValue()) : "-");
 
         try {
             // ======== 第一步：并行同步 K 线（5个周期同时拉取） ========
@@ -160,7 +161,7 @@ public class BTCBotTask {
             int score = (int) (decision.getConfidence() * 100);
 
             log.info("  策略决策 → action={}  price={}  confidence={}%  leverage={}x",
-                    action, formatPrice(price), score, leverage);
+                    action, ConvertUtil.formatPrice(price), score, leverage);
             log.info("  决策理由 → {}", reason);
 
             // 如果币安有持仓，则策略动作降级为 HOLD（只走平仓检查）
@@ -184,7 +185,7 @@ public class BTCBotTask {
         BigDecimal finalBalance = orderService.getAvailableBalance();
         String finalPosition = orderService.getPositionDirection(symbol);
         log.info("  最终状态 → 余额={}  持仓={}",
-                formatBalance(finalBalance.doubleValue()),
+                ConvertUtil.formatBalance(finalBalance.doubleValue()),
                 finalPosition != null ? finalPosition : "空仓");
         log.info("═════════ 自动交易结束 ═════════");
     }
@@ -261,19 +262,11 @@ public class BTCBotTask {
         if (record != null) {
             strategy.clearPositionState(symbol);
             BigDecimal balance = orderService.getAvailableBalance();
-            log.info("  ✔ {}完成，当前余额={} USDT", closeType, formatBalance(balance.doubleValue()));
+            log.info("  ✔ {}完成，当前余额={} USDT", closeType, ConvertUtil.formatBalance(balance.doubleValue()));
         } else {
             log.error("  ❌ {}失败", closeType);
         }
     }
 
-    // ==================== 格式化工具 ====================
-
-    private static String formatPrice(double v) {
-        return String.format("%.2f", v);
-    }
-
-    private static String formatBalance(double v) {
-        return String.format("%.2f", v);
-    }
+    // ==================== 格式化工具（委托给 ConvertUtil） ====================
 }

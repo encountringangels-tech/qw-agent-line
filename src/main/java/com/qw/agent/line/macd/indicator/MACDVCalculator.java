@@ -1,7 +1,8 @@
-package com.qw.agent.line.indicator;
+package com.qw.agent.line.macd.indicator;
 
-import com.qw.agent.line.model.Kline;
-import com.qw.agent.line.model.MACDVPoint;
+import com.qw.agent.line.macd.model.Kline;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.util.MathUtil;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
@@ -110,9 +111,9 @@ public class MACDVCalculator {
                 double sg = signal[i];
                 double hist = mv - sg;
                 results.add(new MACDVPoint(times[i],
-                        BigDecimal.valueOf(round2(mv)),
-                        BigDecimal.valueOf(round2(sg)),
-                        BigDecimal.valueOf(round2(hist))));
+                        BigDecimal.valueOf(MathUtil.round2(mv)),
+                        BigDecimal.valueOf(MathUtil.round2(sg)),
+                        BigDecimal.valueOf(MathUtil.round2(hist))));
             }
         }
 
@@ -214,8 +215,4 @@ public class MACDVCalculator {
         return atr;
     }
 
-    /** 保留两位小数 */
-    private static double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
-    }
 }

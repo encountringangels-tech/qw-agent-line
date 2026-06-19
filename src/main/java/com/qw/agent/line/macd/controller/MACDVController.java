@@ -1,12 +1,13 @@
-package com.qw.agent.line.controller;
+package com.qw.agent.line.macd.controller;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.qw.agent.line.indicator.MACDVCalculator;
-import com.qw.agent.line.service.MACDVService;
+import com.qw.agent.line.macd.indicator.MACDVCalculator;
+import com.qw.agent.line.macd.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
-import com.qw.agent.line.store.MultiTimeframeStrategy;
-import com.qw.agent.line.store.TradeDecision;
-import com.qw.agent.line.strategy.MACDVSignalGenerator;
+import com.qw.agent.line.macd.strategy.MultiTimeframeStrategy;
+import com.qw.agent.line.macd.model.TradeDecision;
+import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
+import com.qw.agent.line.util.DbPathUtil;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.sqlite.SQLiteDataSource;
@@ -74,14 +75,9 @@ public class MACDVController {
         MACDVCalculator calc = new MACDVCalculator();
         MACDVSignalGenerator sig = new MACDVSignalGenerator();
 
-        // SQLite 数据源
-        String userDir = System.getProperty("user.dir");
-        String dbDir = new java.io.File(userDir).getName().equals("qw-agent-line")
-                ? userDir + "/data"
-                : userDir + "/qw-agent-line/data";
-        new java.io.File(dbDir).mkdirs();
+        // SQLite 数据源（使用 DbPathUtil 统一路径解析）
         SQLiteDataSource ds = new SQLiteDataSource();
-        ds.setUrl("jdbc:sqlite:" + dbDir + "/agent-line.db");
+        ds.setUrl(DbPathUtil.getJdbcUrl());
         KlineStore klineStore = new KlineStore(ds);
 
         MACDVService service = new MACDVService(calc, sig, klineStore);

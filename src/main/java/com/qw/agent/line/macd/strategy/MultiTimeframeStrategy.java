@@ -1,7 +1,10 @@
-package com.qw.agent.line.store;
+package com.qw.agent.line.macd.strategy;
 
-import com.qw.agent.line.model.Kline;
-import com.qw.agent.line.model.MACDVPoint;
+import com.qw.agent.line.macd.model.Kline;
+import com.qw.agent.line.macd.model.MACDVPoint;
+import com.qw.agent.line.macd.model.TradeDecision;
+import com.qw.agent.line.store.KlineStore;
+import com.qw.agent.line.util.MathUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -195,7 +198,7 @@ public class MultiTimeframeStrategy {
                 reason.append(ls.reason).append(" [Score10过滤]");
             } else {
                 action = "LONG";
-                confidence = normalizeScore(ls.score);
+                confidence = MathUtil.normalizeScore(ls.score);
                 reason.append(ls.reason);
                 // 3x: 4H强势(>50) + 1H不冲突(>0) — 回测最大亏损仅1.96%
                 if (h4StrongBullish && h1NotConflictLong) {
@@ -221,7 +224,7 @@ public class MultiTimeframeStrategy {
                 reason.append(" 1H<-150极端超卖禁止做空");
             } else {
                 action = "SHORT";
-                confidence = normalizeScore(ss.score);
+                confidence = MathUtil.normalizeScore(ss.score);
                 reason.append(ss.reason);
                 // 3x: 4H强空(<-60) + 1H配合(<0) — 回测最大亏损仅2.21%
                 if (h4StrongBearish && h1NotConflictShort) {
@@ -253,14 +256,14 @@ public class MultiTimeframeStrategy {
         if (ss.vetoed) reason.append(" [日线多头>0过滤做空]");
 
         // 6. 组装结果
-        TradeDecision dec = TradeDecision.of(action, round2(confidence), reason.toString());
+        TradeDecision dec = TradeDecision.of(action, MathUtil.round2(confidence), reason.toString());
         dec.setLeverage(leverage);
-        dec.setDailyMacdv(round2(dMv));
-        dec.setFourHourMacdv(round2(h4Mv));
-        dec.setOneHourMacdv(round2(h1Mv));
-        dec.setFifteenMinMacdv(round2(m15Mv));
-        dec.setFiveMinMacdv(round2(m5Mv));
-        dec.setLastPrice(round2(lastPrice));
+        dec.setDailyMacdv(MathUtil.round2(dMv));
+        dec.setFourHourMacdv(MathUtil.round2(h4Mv));
+        dec.setOneHourMacdv(MathUtil.round2(h1Mv));
+        dec.setFifteenMinMacdv(MathUtil.round2(m15Mv));
+        dec.setFiveMinMacdv(MathUtil.round2(m5Mv));
+        dec.setLastPrice(MathUtil.round2(lastPrice));
         if (daily != null)   dec.setDailyTime(daily.getTime());
         if (fourH != null)   dec.setFourHourTime(fourH.getTime());
         if (oneH != null)    dec.setOneHourTime(oneH.getTime());
@@ -310,7 +313,7 @@ public class MultiTimeframeStrategy {
             double retracePct = (state.highestH4Mv - h4Mv) / Math.abs(state.highestH4Mv);
             if (retracePct > H4_PEAK_RETRACE_THRESHOLD) {
                 log.info("平多[4H见顶] symbol={} 4H最高={} 当前={} 回落={}%",
-                        symbol, round2(state.highestH4Mv), round2(h4Mv), round2(retracePct * 100));
+                        symbol, MathUtil.round2(state.highestH4Mv), MathUtil.round2(h4Mv), MathUtil.round2(retracePct * 100));
                 return true;
             }
         }
@@ -327,7 +330,7 @@ public class MultiTimeframeStrategy {
             double retracePct = (state.highestH1Mv - h1Mv) / Math.abs(state.highestH1Mv);
             if (retracePct > H1_PEAK_RETRACE_THRESHOLD) {
                 log.info("平多[1H见顶] symbol={} 1H最高={} 当前={} 回落={}%",
-                        symbol, round2(state.highestH1Mv), round2(h1Mv), round2(retracePct * 100));
+                        symbol, MathUtil.round2(state.highestH1Mv), MathUtil.round2(h1Mv), MathUtil.round2(retracePct * 100));
                 return true;
             }
         }
@@ -373,7 +376,7 @@ public class MultiTimeframeStrategy {
             double bouncePct = (h4Mv - state.highestH4Mv) / Math.abs(state.highestH4Mv);
             if (bouncePct > H4_PEAK_RETRACE_THRESHOLD) {
                 log.info("平空[4H见底] symbol={} 4H最低={} 当前={} 反弹={}%",
-                        symbol, round2(state.highestH4Mv), round2(h4Mv), round2(bouncePct * 100));
+                        symbol, MathUtil.round2(state.highestH4Mv), MathUtil.round2(h4Mv), MathUtil.round2(bouncePct * 100));
                 return true;
             }
         }
@@ -426,11 +429,11 @@ public class MultiTimeframeStrategy {
         }
 
         // ---- 15min：核心买卖点 ----
-        if (inRange(m15Mv, FIFTEEN_MIN_DEEP_PULLBACK, FIFTEEN_MIN_DEEP_PULLBACK_TOLERANCE)) {
+        if (MathUtil.inRange(m15Mv, FIFTEEN_MIN_DEEP_PULLBACK, FIFTEEN_MIN_DEEP_PULLBACK_TOLERANCE)) {
             // -100 附近：深回调买点（最佳）
             score += 4;
             reason.append("15min深回调-100附近(+4) ");
-        } else if (inRange(m15Mv, FIFTEEN_MIN_AXIS, FIFTEEN_MIN_AXIS_TOLERANCE)) {
+        } else if (MathUtil.inRange(m15Mv, FIFTEEN_MIN_AXIS, FIFTEEN_MIN_AXIS_TOLERANCE)) {
             // 0轴附近：回调到轴的买点
             score += 2;
             reason.append("15min零轴附近(+2) ");
@@ -516,10 +519,10 @@ public class MultiTimeframeStrategy {
         }
 
         // ---- 15min：核心买卖点 ----
-        if (inRange(m15Mv, FIFTEEN_MIN_DEEP_RALLY, FIFTEEN_MIN_DEEP_RALLY_TOLERANCE)) {
+        if (MathUtil.inRange(m15Mv, FIFTEEN_MIN_DEEP_RALLY, FIFTEEN_MIN_DEEP_RALLY_TOLERANCE)) {
             score += 4;
             reason.append("15min深拉回+100附近(+4) ");
-        } else if (inRange(m15Mv, FIFTEEN_MIN_AXIS, FIFTEEN_MIN_AXIS_TOLERANCE)) {
+        } else if (MathUtil.inRange(m15Mv, FIFTEEN_MIN_AXIS, FIFTEEN_MIN_AXIS_TOLERANCE)) {
             score += 2;
             reason.append("15min零轴附近(+2) ");
         } else if (m15Mv < -FIFTEEN_MIN_TAKE_PROFIT) {
@@ -567,18 +570,6 @@ public class MultiTimeframeStrategy {
 
     private static double val(MACDVPoint p) {
         return p != null && p.isValid() ? p.getMacdV().doubleValue() : 0;
-    }
-
-    private static boolean inRange(double value, double target, double tolerance) {
-        return value >= target - tolerance && value <= target + tolerance;
-    }
-
-    private static double normalizeScore(int score) {
-        return Math.min(0.95, Math.max(0.30, score / 10.0));
-    }
-
-    private static double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
     }
 
     // ==================== 内嵌评分结果 ====================

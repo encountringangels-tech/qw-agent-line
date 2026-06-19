@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.macd.indicator.MACDVCalculator;
 import com.qw.agent.line.macd.model.*;
 import com.qw.agent.line.store.KlineStore;
-import com.qw.agent.line.macd.model.TradeDecision;
-import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
 import com.qw.agent.line.util.TimeUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,14 +39,11 @@ public class MACDVService {
 
     private final HttpClient httpClient;
     private final MACDVCalculator calculator;
-    private final MACDVSignalGenerator signalGenerator;
     private final KlineStore klineStore;
 
     public MACDVService(MACDVCalculator calculator,
-                        MACDVSignalGenerator signalGenerator,
                         KlineStore klineStore) {
         this.calculator = calculator;
-        this.signalGenerator = signalGenerator;
         this.klineStore = klineStore;
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -126,25 +121,10 @@ public class MACDVService {
             // 使用指定策略表（如 trade_signal），仅15min标记
             mergeStrategySignals(result, symbol, interval, macdvData, signalSource);
         } else {
-            // 默认信号生成器仅用于15min，其他周期不生成信号
-            if (!"15m".equals(interval)) {
-                result.put("signals", List.of());
-                result.put("latestSignal", Map.of("type", "HOLD", "strength", 0,
-                        "reason", "信号仅15min显示"));
-            } else {
-                List<TradeSignal> tradeSignals = signalGenerator.generateBatch(macdvPoints, dTh, kTh,
-                        trendFilter, minHoldBars, cooldownBars, minHistAmp, klineData);
-                int m = tradeSignals.size();
-                List<Map<String, Object>> signalData = new ArrayList<>(m);
-                for (int i = 0; i < m; i++) {
-                    signalData.add(toSignalMap(tradeSignals.get(i)));
-                }
-                result.put("signals", signalData);
-
-                LatestSignal latest = signalGenerator.evaluateLatest(macdvPoints, dTh, kTh,
-                        trendFilter, minHoldBars, cooldownBars, minHistAmp);
-                result.put("latestSignal", toLatestSignalMap(latest));
-            }
+            // 信号通过 MultiTimeframeStrategy.decide() 或前端直接调用 /macdv/decide 获取
+            result.put("signals", List.of());
+            result.put("latestSignal", Map.of("type", "HOLD", "strength", 0,
+                    "reason", "信号请通过 /macdv/decide 接口获取"));
         }
 
         return result;
@@ -456,27 +436,6 @@ public class MACDVService {
         m.put("macdV", p.getMacdV() != null ? p.getMacdV().doubleValue() : null);
         m.put("signal", p.getSignal() != null ? p.getSignal().doubleValue() : null);
         m.put("hist", p.getHist() != null ? p.getHist().doubleValue() : null);
-        return m;
-    }
-
-    private Map<String, Object> toSignalMap(TradeSignal s) {
-        Map<String, Object> m = new HashMap<>();
-        m.put("time", s.getTime());
-        m.put("type", s.getType());
-        m.put("subType", s.getSubType());
-        m.put("reason", s.getReason());
-        m.put("strength", s.getStrength());
-        return m;
-    }
-
-    private Map<String, Object> toLatestSignalMap(LatestSignal s) {
-        Map<String, Object> m = new HashMap<>();
-        m.put("type", s.getType());
-        m.put("strength", s.getStrength());
-        m.put("reason", s.getReason());
-        m.put("macdvLine", s.getMacdvLine());
-        m.put("macdvSignal", s.getMacdvSignal());
-        m.put("macdvHist", s.getMacdvHist());
         return m;
     }
 

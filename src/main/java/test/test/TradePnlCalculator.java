@@ -1,4 +1,4 @@
-package test;
+package test.test;
 
 import com.qw.agent.line.macd.model.TradeSignalRecord;
 import com.qw.agent.line.store.KlineStore;

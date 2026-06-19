@@ -1,4 +1,4 @@
-package test;
+package test.test;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.qw.agent.line.macd.indicator.MACDVCalculator;
@@ -9,7 +9,6 @@ import com.qw.agent.line.macd.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
 import com.qw.agent.line.macd.strategy.MultiTimeframeStrategy;
 import com.qw.agent.line.macd.model.TradeDecision;
-import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
 import org.sqlite.SQLiteDataSource;
 
 import java.io.File;
@@ -429,7 +428,7 @@ public class Test {
     }
 
     private static MACDVService createService(KlineStore store) {
-        return new MACDVService(new MACDVCalculator(), new MACDVSignalGenerator(), store);
+        return new MACDVService(new MACDVCalculator(), store);
     }
 
     // =========================================================================

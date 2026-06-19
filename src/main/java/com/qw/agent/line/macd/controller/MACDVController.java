@@ -6,7 +6,6 @@ import com.qw.agent.line.macd.service.MACDVService;
 import com.qw.agent.line.store.KlineStore;
 import com.qw.agent.line.macd.strategy.MultiTimeframeStrategy;
 import com.qw.agent.line.macd.model.TradeDecision;
-import com.qw.agent.line.macd.strategy.MACDVSignalGenerator;
 import com.qw.agent.line.util.DbPathUtil;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -50,12 +49,12 @@ public class MACDVController {
         int slowLen       = 26;
         int signalLen     = 9;
         int atrLen        = 26;
-        int dTh           = MACDVSignalGenerator.DEFAULT_D_TH;
-        int kTh           = MACDVSignalGenerator.DEFAULT_K_TH;
-        boolean trendFilter = MACDVSignalGenerator.DEFAULT_TREND_FILTER;
-        int minHoldBars    = MACDVSignalGenerator.DEFAULT_MIN_HOLD_BARS;
-        int cooldownBars   = MACDVSignalGenerator.DEFAULT_COOLDOWN_BARS;
-        double minHistAmp  = MACDVSignalGenerator.DEFAULT_MIN_HIST_AMP;
+        int dTh           = -100;
+        int kTh           = 100;
+        boolean trendFilter = true;
+        int minHoldBars    = 3;
+        int cooldownBars   = 3;
+        double minHistAmp  = 0.03;
 
         if (args.length >= 1) symbol       = args[0];
         if (args.length >= 2) interval     = args[1];
@@ -73,14 +72,13 @@ public class MACDVController {
 
         // 手动组装依赖（不启动 Spring）
         MACDVCalculator calc = new MACDVCalculator();
-        MACDVSignalGenerator sig = new MACDVSignalGenerator();
 
         // SQLite 数据源（使用 DbPathUtil 统一路径解析）
         SQLiteDataSource ds = new SQLiteDataSource();
         ds.setUrl(DbPathUtil.getJdbcUrl());
         KlineStore klineStore = new KlineStore(ds);
 
-        MACDVService service = new MACDVService(calc, sig, klineStore);
+        MACDVService service = new MACDVService(calc, klineStore);
 
         long start = System.currentTimeMillis();
         Map<String, Object> data = service.getChartData(

@@ -35,7 +35,7 @@ public class Test {
     private static final String[] INTERVALS = {"5m", "15m", "30m", "1h", "4h", "1d"};
 
     public static void main(String[] args) throws Exception {
-        // ===== 选择要执行的方法，取消注释即可 =====
+        // ===== 选择要执行的方法，取消注释即可 =====/ws/muusdt@trade
 
 //         deleteAllData();
         // syncLatest();
